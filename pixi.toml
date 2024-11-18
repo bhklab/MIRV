@@ -3,7 +3,7 @@ authors = ["caryn-geady <caryn@geady.com>"]
 channels = ["conda-forge"]
 description = "Investigating the relationship between Measured Intra-patient Radiomic Variability (MIRV) and treatment response in the metastatic setting."
 name = "MIRV"
-platforms = ["osx-64"]
+platforms = ["osx-64", "osx-arm64", "win-64"]
 version = "0.1.0"
 
 [tasks]
