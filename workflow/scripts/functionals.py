@@ -249,7 +249,7 @@ class DataProcessing:
                     annot=True, fmt=".2f", annot_kws={"color": "white"})
         plt.xticks(np.arange(cor.shape[0]-1) + 0.5, cor.columns[:-1], rotation=90)
         plt.yticks(np.arange(cor.shape[0]-1) + 1.5, cor.columns[1:], rotation=0)
-        plt.title('Spearman correlation matrix')
+        plt.title('Correlation matrix')
         if savefigFlag:
             plt.savefig('../../results/correlation_matrix.png',bbox_inches='tight',dpi=300)
         plt.show()
