@@ -1,6 +1,8 @@
 # MIRV
 
-Investigating the relationship between **M**easured **I**ntra-patient **R**adiomic **V**ariability (**MIRV**) and treatment response in the metastatic setting. The specific hypothesis: greater differences in radiomic phenotypes between lesions correlate with variability in treatment response, potentially impacting personalized treatment strategies. 
+Investigating the relationship between **M**easured **I**ntra-patient **R**adiomic **V**ariability (**MIRV**) and treatment response in the metastatic setting. 
+
+Specific hypothesis: *greater differences in radiomic phenotypes between lesions correlate with variability in treatment response, potentially impacting personalized treatment strategies*. 
 
 ## Pipeline Overview
 ![alt text](resources/diagrams/MIRV-pipeline.jpg)
