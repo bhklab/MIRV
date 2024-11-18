@@ -28,7 +28,7 @@ class MIRVPipe:
         outcome_df = dp.calcMIRVMetrics(radiomics_red, response_df)
 
         # output correlation matrix with significance values
-        cormat, pmat = dp.correlationMatrix(outcome_df,drop_cols=[],savefigFlag=False) 
+        cormat, pmat = dp.correlationMatrix(outcome_df,drop_cols=[],savefigFlag=True) 
         
         return radiomics_red, response_df, outcome_df #, cormat, pmat  
 

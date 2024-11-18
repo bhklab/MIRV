@@ -250,6 +250,7 @@ class DataProcessing:
         plt.xticks(np.arange(cor.shape[0]-1) + 0.5, cor.columns[:-1], rotation=90)
         plt.yticks(np.arange(cor.shape[0]-1) + 1.5, cor.columns[1:], rotation=0)
         plt.title('Correlation matrix')
+        plt.tight_layout()
         if savefigFlag:
             plt.savefig('../../results/correlation_matrix.png',bbox_inches='tight',dpi=300)
         plt.show()
@@ -273,6 +274,7 @@ class DataProcessing:
         plt.xticks(np.arange(pval.shape[0]-1) + 0.5, pval.columns[:-1], rotation=90)
         plt.yticks(np.arange(pval.shape[0]-1) + 1.5, pval.columns[1:], rotation=0)
         plt.title('Significance matrix')
+        plt.tight_layout()
         if savefigFlag:
             plt.savefig('../../results/significance_matrix.png',bbox_inches='tight',dpi=300)
         plt.show()
