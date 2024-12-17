@@ -80,10 +80,12 @@ class DataProcessing:
         # patient-specific outcomes
         baseline_range = vol_df.groupby(self.patient_id)['VOLUME_PRE'].apply(lambda x: x.max() - x.min()).values
         baseline_stddev = vol_df.groupby(self.patient_id)['VOLUME_PRE'].apply(lambda x: x.std()).values
+        baseline_total = vol_df.groupby(self.patient_id)['VOLUME_PRE'].apply(lambda x: x.sum()).values
         volume_range = vol_df.groupby(self.patient_id).apply(lambda x: x.VOLUME_CHANGE_PCT.max()-x.VOLUME_CHANGE_PCT.min())
     
         patient_outcomes = pd.DataFrame({   'Brange': baseline_range,
                                             'Bstddev': baseline_stddev,
+                                            'Btotal': baseline_total,
                                             'Vrange': volume_range.values, })
                                         
         patient_outcomes.index = volume_range.index
@@ -150,6 +152,38 @@ class DataProcessing:
 
         return scaled_radiomics
     
+    def loadCTDNA(self, path_to_ctDNA):
+        """
+        Load the clinical data and isolate the relevant columns.
+        Parameters:
+        -----------
+        clinicalPath : str
+            The path to the clinical data CSV file.
+        Returns:
+        --------
+        pd.DataFrame
+            The clinical data with the relevant columns.
+        """
+        ctdna_df = pd.read_csv(path_to_ctDNA)
+        ctdna_df.USUBJID = ['TH-CR-04060' + str(i) for i in ctdna_df.USUBJID]
+
+        return ctdna_df
+    
+    def loadClinical(self, path_to_clinical):
+        """
+        Load the clinical data and isolate the relevant columns.
+        Parameters:
+        -----------
+        clinicalPath : str
+            The path to the clinical data CSV file.
+        Returns:
+        --------
+        pd.DataFrame
+            The clinical data with the relevant columns.
+        """
+
+        return pd.read_csv(path_to_clinical)
+    
     def calcMIRVMetrics(self,rad_df,resp_df):
         """
         Calculates the cosine similarity and Euclidean distance between pairs of lesions for each patient.
@@ -208,7 +242,7 @@ class DataProcessing:
 
         return outcome_df
     
-    def correlationMatrix(self,df,drop_cols = None,use_fdr=True,savefigFlag=False):
+    def correlationMatrix(self,df,drop_cols = None,use_fdr=True,savefigFlag=False,invertFlag=False):
         """
         Output a correlation matrix with significance values.
         Parameters:
@@ -221,17 +255,47 @@ class DataProcessing:
             Use the false discovery rate to adjust p-values. Default is True.
         """
 
+        # optional: invert color scheme for plots
+        if invertFlag:
+            # invert the color scheme
+            plt.rcParams.update({
+                'lines.color': 'white',
+                'patch.edgecolor': 'black',
+                'text.color': 'white',
+                'axes.facecolor': 'black',
+                'axes.edgecolor': 'black',
+                'axes.labelcolor': 'white',
+                'xtick.color': 'white',
+                'ytick.color': 'white',
+                'grid.color': 'black',
+                'figure.facecolor': 'black',
+                'figure.edgecolor': 'black',
+                'savefig.facecolor': 'black',
+                'savefig.edgecolor': 'black',
+                'font.size': 24
+            })
+
         if drop_cols is not None:
             df = df.drop(drop_cols,axis=1)
 
-        rename_dict = { 'Brange': 'Baseline Volume',
+        rename_dict = { 'ARM': 'Trial Arm',
+                        'Brange': 'Baseline Volume (range)',
                         'Bstddev': 'Baseline Volume (σ)',
+                        'Btotal': 'Baseline Volume (total)',
                         'Vrange': 'Δ Volume',
                         'AvgTumorSim': 'MIRV(μ) Dissimilarity',
                         'MaxTumorSim': 'MIRV(max) Dissimilarity',
                         'AvgEuclDist': 'MIRV(μ) Distance', 
                         'MaxEuclDist': 'MIRV(max) Distance'}  
         df.columns = [rename_dict[col] if col in rename_dict.keys() else col for col in df.columns]
+        df = df.dropna()
+
+        print('Number of patients: {}'.format(df.shape[0]))
+
+        if df.shape[1] > 10:
+            plot_dim = 15
+        else:
+            plot_dim = 12
 
         # calculate the correlations and associated p-values
         cor = df.corr(method='spearman')
@@ -239,18 +303,23 @@ class DataProcessing:
 
         # params
         mask = np.triu(np.ones_like(cor, dtype=bool))
-        cmap = sns.color_palette("icefire", as_cmap=True)
+        cmap = sns.color_palette("hsv", as_cmap=True)
         plt.rcParams.update({'font.size': 18})
 
         # plotting -- correlation matrix
-        f, ax = plt.subplots(figsize=(11, 11))
-        sns.heatmap(cor, mask=mask, cmap=cmap, vmax=1, center=0,
-                    square=True, linewidths=.5, cbar_kws={"shrink": .5},
-                    annot=True, fmt=".2f", annot_kws={"color": "white"})
+        f, ax = plt.subplots(figsize=(plot_dim, plot_dim))
+        res = sns.heatmap(cor, mask=mask, cmap=cmap, vmax=1, center=0,
+                    square=True, linewidths=0, cbar_kws={"shrink": .5},
+                    annot=True, fmt=".2f", annot_kws={"color": "black"})
         plt.xticks(np.arange(cor.shape[0]-1) + 0.5, cor.columns[:-1], rotation=90)
         plt.yticks(np.arange(cor.shape[0]-1) + 1.5, cor.columns[1:], rotation=0)
         plt.title('Correlation matrix')
         plt.tight_layout()
+        # Removing frame 
+        for _, spine in res.spines.items(): 
+            spine.set_visible(False) 
+            
+
         if savefigFlag:
             plt.savefig('../../results/correlation_matrix.png',bbox_inches='tight',dpi=300)
         plt.show()
@@ -267,14 +336,17 @@ class DataProcessing:
             pval = fdr
 
         # plotting -- significance matrix
-        f, ax = plt.subplots(figsize=(11, 11))
-        sns.heatmap(fdr, mask=mask, cmap=cmap, vmax=1, center=0,
-                    square=True, linewidths=.5, cbar_kws={"shrink": .5},
-                    annot=True, fmt=".2f", annot_kws={"color": "white"})
+        f, ax = plt.subplots(figsize=(plot_dim, plot_dim))
+        res = sns.heatmap(fdr, mask=mask, cmap=cmap, vmax=1, center=0,
+                    square=True, linewidths=0, cbar_kws={"shrink": .5},
+                    annot=True, fmt=".2f", annot_kws={"color": "black"})
         plt.xticks(np.arange(pval.shape[0]-1) + 0.5, pval.columns[:-1], rotation=90)
         plt.yticks(np.arange(pval.shape[0]-1) + 1.5, pval.columns[1:], rotation=0)
         plt.title('Significance matrix')
         plt.tight_layout()
+        # Removing frame 
+        for _, spine in res.spines.items(): 
+            spine.set_visible(False) 
         if savefigFlag:
             plt.savefig('../../results/significance_matrix.png',bbox_inches='tight',dpi=300)
         plt.show()
