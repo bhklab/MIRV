@@ -549,7 +549,7 @@ class DataProcessing:
         if df[mirv].dtype in [np.float64, np.int64]:
             median_value = df[mirv].median()
             df['group'] = df[mirv] >= median_value
-            df['group'] = df['group'].replace({True: '>= median', False: '< median'})
+            df['group'] = df['group'].replace({True: 'High', False: 'Low'})
         elif df[mirv].dtype == np.bool_:
             df['group'] = df[mirv]
             df['group'] = df['group'].replace({True: 'True', False: 'False'})
@@ -686,7 +686,7 @@ class DataProcessing:
                 palette = sns.color_palette("colorblind", len(df_temp[x_var].unique()))
                 fig, ax = plt.subplots(figsize=(8, 6))
                 ax = sns.boxplot(x=x_var, y=mirv, data=df_temp, palette=palette)
-                ax.set_xticklabels(ax.get_xticklabels(), rotation=45, ha='right', wrap=True)
+                ax.set_xticklabels(ax.get_xticklabels(), rotation=45)
                 ax.set_ylabel(plot_dict[mirv])
                 ax.set_xlabel(None)
 

@@ -23,7 +23,7 @@ class MIRVPipe:
         
         # instantiate the data processing class
         dp = DataProcessing(patient_id = self.patient_id,    # column name for patient ID in PyRadiomics output
-                            labels = {'col':'diagnostics_Versions_PyRadiomics','pre':'baseline','post':'cycle2'})       # options for 'col': (1) 'diagnostics_Versions_PyRadiomics', (2) 'STUDY'
+                            labels = {'col':'STUDY','pre':'baseline','post':'cycle2'})       # options for 'col': (1) 'diagnostics_Versions_PyRadiomics', (2) 'STUDY'
 
         # radiomics data loading and feature reduction
         rad_volume_results = dp.loadRadiomics(self.radiomicsData)
@@ -66,8 +66,10 @@ class MIRVPipe:
             if data[0] is not None and data[1]['corrvars'] is not None:
                 data_df = dp.loadData(data[0], data[1]['corrvars'] + [self.patient_id])
                 data_df = data_df[data_df[self.patient_id].isin(outcome_df[self.patient_id])]
-                if data == self.ctdnaData and 'Pre-cycle3_bin' in data_df.columns:
-                    data_df['Response_bin'] = data_df['Pre-cycle3_bin'] - data_df['Pretreatment_bin']  # fix
+                # if data == self.ctdnaData and 'Pre-cycle3_bin' in data_df.columns:
+                #     data_df['Response_bin'] = data_df['Pre-cycle3_bin'] - data_df['Pretreatment_bin']  # fix
+                # if data == self.ctdnaData and 'Pre-cycle3_frac' in data_df.columns:
+                #     data_df['Response_frac'] = data_df['Pre-cycle3_frac'] - data_df['Pretreatment_frac']  # fix
                 corr_df[self.patient_id] = corr_df[self.patient_id].astype(str)
                 data_df[self.patient_id] = data_df[self.patient_id].astype(str)
                 corr_df = corr_df.merge(data_df, on=self.patient_id, how='left', suffixes=('', '_drop')).reset_index(drop=True)
@@ -108,13 +110,13 @@ if __name__ == '__main__':
     # instantiate the MIRV pipeline for SARC021
     mp_sarc = MIRVPipe(     radiomics = '../../procdata/SARC021/radiomics-all.csv',
                             clinical  = [   '../../rawdata/SARC021/baseline-all.csv', 
-                                        {'corrvars':['ARM','BECOG'],
-                                        'boxplotvars':['SEX','CPCELL','BECOG']}], 
+                                        {'corrvars':[],
+                                        'boxplotvars':['CPCELL']}], 
                             recist    = [   '../../rawdata/SARC021/recist-all.csv',
                                         {'corrvars':[],
                                         'boxplotvars':['RECIST']}], 
                             survival  = [   '../../rawdata/SARC021/survival-all.csv',
-                                        {'survcols':[('T_PFS','E_PFS'), 
+                                        {'survcols':[#('T_PFS','E_PFS'), 
                                                      ('T_OS', 'E_OS')],
                                                      'yearConversion':1}], 
                             ctdna     = [   '../../rawdata/SARC021/ctdna-lms.csv',
@@ -133,7 +135,7 @@ if __name__ == '__main__':
                                         {'survcols':[('T_OS','E_OS')],
                                         'yearConversion':1.0}], 
                             ctdna     = ['../../rawdata/RADCURE/RADCURE_ctdna.csv',
-                                        {'corrvars':['Log Baseline','Log Mid RT','Log 3 Month','Log Diff 1','Log Diff 2','Log Diff 3'],
+                                        {'corrvars':['Log Baseline','Log Mid RT'],
                                         'boxplotvars':[]}]
                         )
     
@@ -154,7 +156,7 @@ if __name__ == '__main__':
                         )
     
     # run the pipeline
-    results = mp_radc.run()
+    results = mp_octn.run()
 
     
 
