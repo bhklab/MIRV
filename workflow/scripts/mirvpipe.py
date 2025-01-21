@@ -23,8 +23,8 @@ class MIRVPipe:
         
         # instantiate the data processing class
         dp = DataProcessing(patient_id = self.patient_id,    # column name for patient ID in PyRadiomics output
-                            labels = {'col':'STUDY','pre':'baseline','post':'cycle2'})       # options for 'col': (1) 'diagnostics_Versions_PyRadiomics', (2) 'STUDY'
-
+                            labels = {'col':'diagnostics_Versions_PyRadiomics','pre':'baseline','post':'cycle2'})       # options for 'col': (1) 'diagnostics_Versions_PyRadiomics', (2) 'STUDY'
+        print('Data Processing Class Initialized')
         # radiomics data loading and feature reduction
         rad_volume_results = dp.loadRadiomics(self.radiomicsData)
 
@@ -123,6 +123,23 @@ if __name__ == '__main__':
                                         {'corrvars':['Pretreatment_bin','Pre-cycle3_bin'],
                                         'boxplotvars':['Pretreatment_bin','Pre-cycle3_bin']}]
                         )
+
+    # instantiate the MIRV pipeline for CRLM
+    mp_crlm = MIRVPipe(     radiomics = '../../procdata/MSK/MSK_radiomics.csv',
+                            clinical  = [ None,#  '../../rawdata/SARC021/baseline-all.csv', 
+                                        {'corrvars':[],
+                                        'boxplotvars':[]}], 
+                            recist    = [ None,#  '../../rawdata/SARC021/recist-all.csv',
+                                        {'corrvars':[],
+                                        'boxplotvars':[]}], 
+                            survival  = [ None, #  '../../rawdata/SARC021/survival-all.csv',
+                                        {'survcols':[],
+                                                     'yearConversion':1}], 
+                            ctdna     = [ None, #  '../../rawdata/SARC021/ctdna-lms.csv',
+                                        {'corrvars':[],
+                                        'boxplotvars':[]}]
+                        )
+    
     # instantiate the MIRV pipeline for RADCURE
     mp_radc = MIRVPipe(     radiomics = '../../procdata/RADCURE/RADCURE_radiomics.csv',
                             clinical  = [   '../../rawdata/RADCURE/RADCURE_clinical.csv', 
@@ -156,7 +173,7 @@ if __name__ == '__main__':
                         )
     
     # run the pipeline
-    results = mp_octn.run()
+    results = mp_sarc.run()
 
     
 
