@@ -2,6 +2,7 @@ import pandas as pd, numpy as np
 from sklearn.preprocessing import StandardScaler
 from itertools import combinations
 from sklearn.metrics.pairwise import cosine_similarity
+from scipy.spatial.distance import mahalanobis
 from scipy.stats import spearmanr
 from statsmodels.stats.multitest import multipletests
 import seaborn as sns, matplotlib.pyplot as plt
@@ -184,8 +185,21 @@ class DataProcessing:
         baseline_range = vol_df.groupby(self.patient_id)['VOLUME_PRE'].apply(lambda x: x.max() - x.min())
         baseline_stddev = vol_df.groupby(self.patient_id)['VOLUME_PRE'].apply(lambda x: x.std()).values
         baseline_total = vol_df.groupby(self.patient_id)['VOLUME_PRE'].apply(lambda x: x.sum()).values
+
         if 'VOLUME_CHANGE_PCT' in vol_df.columns:
-            volume_range = vol_df.groupby(self.patient_id).apply(lambda x: x.VOLUME_CHANGE_PCT.max()-x.VOLUME_CHANGE_PCT.min())
+            volume_range = vol_df.groupby(self.patient_id).apply(lambda x: x.VOLUME_CHANGE_PCT.max() - x.VOLUME_CHANGE_PCT.min())
+
+            # Define the custom function
+            def check_volume_change(group):
+                if (group > 25).all():
+                    return 1
+                elif (group <= 25).all():
+                    return -1
+                else:
+                    return 0
+
+            # Apply the custom function to each group
+            volume_change_check = vol_df.groupby(self.patient_id)['VOLUME_CHANGE_PCT'].apply(check_volume_change)
 
         if resp_arr is not None:
             pinds_update = np.where(resp_arr != 0)[0]
@@ -197,21 +211,21 @@ class DataProcessing:
                     pvols = pvols.append(pd.Series(-100))
                 elif resp_arr[np.where(patient_list == patient_list[i])[0][0]] == 1:
                     pvols = pvols.append(pd.Series(100))
-                
-                # overwrite the volume_range value
+
+                # Overwrite the volume_range value
                 volume_range.iloc[pinds_update[i]] = pvols.max() - pvols.min()
+                
+                # Overwrite the volume_change_check value
+                volume_change_check.iloc[pinds_update[i]] = check_volume_change(pvols)
 
-
-    
-        patient_outcomes = pd.DataFrame({   self.patient_id: baseline_range.index,
-                                            'Brange': baseline_range.values,
-                                            'Bstddev': baseline_stddev,
-                                            'Btotal': baseline_total
-                                            })
-        if 'VOLUME_CHANGE_PCT' in vol_df.columns:
-            patient_outcomes['Vrange'] = volume_range.values
-
-        patient_outcomes.reset_index(drop=True,inplace=True)
+        patient_outcomes = pd.DataFrame({
+            self.patient_id: baseline_range.index,
+            'Brange': baseline_range.values,
+            'Bstddev': baseline_stddev,
+            'Btotal': baseline_total,
+            'Vrange': volume_range.values,
+            'Mixed Response': volume_change_check.values
+        })
 
         return patient_outcomes
     
@@ -351,6 +365,10 @@ class DataProcessing:
             
             for i in range(len(combos)):
                 
+                # cov_mat = np.cov(np.stack((pc[combos[i][0],:],pc[combos[i][1],:]),axis=0),rowvar=False)
+                # cov_mat += np.eye(cov_mat.shape[0]) * 1e-10
+                # inv_cov_mat = np.linalg.inv(cov_mat)
+                # cos_sim[i] = mahalanobis(pc[combos[i][0],:],pc[combos[i][1],:],inv_cov_mat)
                 cos_sim[i] = 1 - cosine_similarity([pc[combos[i][0],:],pc[combos[i][1],:]])[0][1]
                 eucl_dist[i] = np.linalg.norm(pc[combos[i][0],:]-pc[combos[i][1],:])
 
@@ -640,8 +658,13 @@ class DataProcessing:
                 # Conditional formatting for plots
                 # -------------------------------
                 # Specific to SARC021
-                if x_var == 'Histologic classification':
+                if x_var == 'CPCELL':
                     df_temp[x_var] = df_temp[x_var].replace({'Undifferentiated Pleomorphic Sarcoma': 'UPS'})
+                    # change the order of the categories to 'Leiomyosarcoma','UPS','Liposarcoma','Other'
+                    df_temp[x_var] = pd.Categorical(df_temp[x_var], categories=['Leiomyosarcoma','UPS','Liposarcoma','Other'], ordered=True)
+                if x_var == 'RECIST':
+                    # remove patients with NE response
+                    df_temp = df_temp[df_temp['RECIST'] != 'NE']
                 if x_var == 'Response_bin':
                     always_0 = np.logical_and(~df_temp['Pretreatment_bin'].astype(bool), ~df_temp['Pre-cycle3_bin'].astype(bool))
                     always_1 = np.logical_and(df_temp['Pretreatment_bin'].astype(bool), df_temp['Pre-cycle3_bin'].astype(bool))
@@ -683,10 +706,11 @@ class DataProcessing:
                 plt.rcParams.update({'font.size': 18})
 
                 # Boxplot of MIRV distance by histology
-                palette = sns.color_palette("colorblind", len(df_temp[x_var].unique()))
-                fig, ax = plt.subplots(figsize=(8, 6))
-                ax = sns.boxplot(x=x_var, y=mirv, data=df_temp, palette=palette)
-                ax.set_xticklabels(ax.get_xticklabels(), rotation=45)
+                num_categories = len(df_temp[x_var].unique())
+                palette = sns.color_palette("colorblind", num_categories)
+                fig, ax = plt.subplots(figsize=(num_categories * 2, 6))
+                ax = sns.boxplot(x=x_var, y=mirv, data=df_temp, palette=palette, hue=x_var, legend=False)
+                plt.xticks(rotation=45)
                 ax.set_ylabel(plot_dict[mirv])
                 ax.set_xlabel(None)
 
@@ -698,6 +722,9 @@ class DataProcessing:
                 annotator = Annotator(ax, pairs, data=df_temp, x=x_var, y=mirv)
                 annotator.configure(test='Kruskal', text_format='star', loc='outside', verbose=2, pvalue_thresholds=[(0.001, '***'), (0.01, '**'), (0.05, '*'), (0.1, '.'), (1, 'ns')])
                 annotator.apply_and_annotate()
+
+                # Adjust layout to prevent squishing
+                plt.subplots_adjust(bottom=0.3)
 
                 # Just because I like the look of it -- like R plots
                 sns.despine(trim=True, offset=10)

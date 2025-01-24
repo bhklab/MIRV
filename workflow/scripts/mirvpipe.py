@@ -23,7 +23,7 @@ class MIRVPipe:
         
         # instantiate the data processing class
         dp = DataProcessing(patient_id = self.patient_id,    # column name for patient ID in PyRadiomics output
-                            labels = {'col':'diagnostics_Versions_PyRadiomics','pre':'baseline','post':'cycle2'})       # options for 'col': (1) 'diagnostics_Versions_PyRadiomics', (2) 'STUDY'
+                            labels = {'col':'STUDY','pre':'baseline','post':'cycle2'})       # options for 'col': (1) 'diagnostics_Versions_PyRadiomics', (2) 'STUDY'
         print('Data Processing Class Initialized')
         # radiomics data loading and feature reduction
         rad_volume_results = dp.loadRadiomics(self.radiomicsData)
@@ -97,18 +97,18 @@ class MIRVPipe:
                 data_df[self.patient_id] = data_df[self.patient_id].astype(str)
                 box_df = box_df.merge(data_df, on=self.patient_id, how='left', suffixes=('', '_drop')).reset_index(drop=True)
                 # outcome_df = outcome_df.drop(columns=[f'{self.patient_id}_drop'])
-        box_df = box_df.drop(columns=[self.patient_id])
+        # box_df = box_df.drop(columns=[self.patient_id])
         boxplot_vars = box_df.columns[box_df.columns.get_loc('MaxEuclDist')+1:]
         dp.compareMIRVByCategory(box_df, boxplot_vars, mirv_vars=['MaxEuclDist'],savefigFlag=False,invertFlag=False)
         
-        results = [survival_df,corr_df,box_df,cormat,pmat]
+        results = [rad_volume_results,survival_df,corr_df,box_df,cormat,pmat]
         
         return results
 
 if __name__ == '__main__':
     
     # instantiate the MIRV pipeline for SARC021
-    mp_sarc = MIRVPipe(     radiomics = '../../procdata/SARC021/radiomics-all.csv',
+    mp_sarc = MIRVPipe(     radiomics = '../../procdata/SARC021/radiomics-lung.csv',
                             clinical  = [   '../../rawdata/SARC021/baseline-all.csv', 
                                         {'corrvars':[],
                                         'boxplotvars':['CPCELL']}], 
@@ -119,7 +119,7 @@ if __name__ == '__main__':
                                         {'survcols':[#('T_PFS','E_PFS'), 
                                                      ('T_OS', 'E_OS')],
                                                      'yearConversion':1}], 
-                            ctdna     = [   '../../rawdata/SARC021/ctdna-lms.csv',
+                            ctdna     = [  None,# '../../rawdata/SARC021/ctdna-lms.csv',
                                         {'corrvars':['Pretreatment_bin','Pre-cycle3_bin'],
                                         'boxplotvars':['Pretreatment_bin','Pre-cycle3_bin']}]
                         )
@@ -175,5 +175,50 @@ if __name__ == '__main__':
     # run the pipeline
     results = mp_sarc.run()
 
-    
 
+# %%
+
+import pandas as pd
+import numpy as np
+from lifelines import KaplanMeierFitter
+import matplotlib.pyplot as plt
+from lifelines.statistics import logrank_test, multivariate_logrank_test
+from lifelines.plotting import add_at_risk_counts
+from lifelines import CoxPHFitter
+
+# Assuming results is already defined and contains the necessary data
+box_df = results[3]
+surv_df = results[1]
+
+time = surv_df['T_OS']
+event = surv_df['E_OS']
+col = surv_df['Mixed Response']
+
+# Initialize the KaplanMeierFitter
+kmf = KaplanMeierFitter()
+
+# Fit the data
+# kmf.fit(durations=time, event_observed=event, label='Overall')
+# ax = kmf.plot_survival_function()
+# add_at_risk_counts(kmf, ax=ax)
+# plt.title('Overall Survival')
+# plt.xlabel('Time (years)')
+# plt.ylabel('Survival Probability')
+
+ax = plt.subplot(111)
+
+# stratify by column
+for val in col.unique():
+    mask = col == val
+    kmf.fit(time[mask], event[mask], label=val)
+    kmf.plot_survival_function(ax=ax)
+    
+add_at_risk_counts(kmf, ax=ax)
+
+plt.xlabel('Time (years)')
+plt.ylabel('Survival Probability')
+
+# multivariable log-rank test
+result = multivariate_logrank_test(time, col, event)
+result.print_summary()
+# %%
