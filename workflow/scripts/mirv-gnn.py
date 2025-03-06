@@ -20,7 +20,10 @@ def load_pickle(file_path):
 
 results_surv = load_pickle('../../procdata/SARC021/results_surv.pkl')
 
-cols_to_keep = results_surv[1].columns
+if results_surv is not None:
+    cols_to_keep = results_surv[1].columns
+else:
+    raise ValueError("results_surv is None. Please check the pickle file.")
 
 # isolate multimetastatic patients with survival data
 lesion_counts = radiomics['USUBJID'].value_counts()
@@ -28,7 +31,7 @@ patients_with_multiple_lesions = lesion_counts[lesion_counts > 1].index
 patients_with_survival_data = survival['USUBJID'].unique()
 valid_patients = patients_with_multiple_lesions.intersection(patients_with_survival_data)
 radiomics = radiomics[radiomics['USUBJID'].isin(valid_patients)]
-survival = survival[survival['USUBJID'].isin(valid_patients)]
+survival = survival[survival['USUBJID'].isin(valid_patients)][['USUBJID', 'T_OS', 'E_OS']]
 
 # get spatial coordinates using the masks (convert from strings) 
 com_idx = radiomics.pop('diagnostics_Mask-original_CenterOfMassIndex')
@@ -44,12 +47,16 @@ radiomics = radiomics[cols_to_keep]
 # Determine the number of input features for modeling
 num_features = radiomics.shape[1]   
 
+# Check for NaNs in the data
+assert not radiomics.select_dtypes(include=[np.number]).isnull().values.any(), "NaNs found in radiomics data"
+assert not survival.select_dtypes(include=[np.number]).isnull().values.any(), "NaNs found in survival data"
+
 del(results_surv,cols_to_keep,lesion_counts,patients_with_multiple_lesions,patients_with_survival_data,valid_patients,entry,vector,com_idx)
 
 # %% Define the graph data structure
 
 import torch
-from sklearn.preprocessing import MinMaxScaler
+from sklearn.preprocessing import MinMaxScaler, StandardScaler
 from torch_geometric.data import Data
 from torch_geometric.loader import DataLoader
 from sklearn.model_selection import train_test_split
@@ -62,8 +69,8 @@ for subj in patients:
     # Extract lesion features for the current patient
     lesion_features = radiomics[subj_list == subj].values
 
-    # Scale the features to the range [0, 1]
-    scaler = MinMaxScaler()
+    # Scale the features 
+    scaler = StandardScaler()
     lesion_features = scaler.fit_transform(lesion_features)
     lesion_indices = np.where(subj_list == subj)[0]
     lesion_com_vectors = com_vectors[lesion_indices]
@@ -105,6 +112,7 @@ test_loader = DataLoader(test_data, batch_size=1, shuffle=False)
 
 import torch.nn.functional as F
 from torch_geometric.nn import GCNConv
+import torch.nn.init as init
 
 class GNN(torch.nn.Module):
     def __init__(self, in_channels, hidden_channels, out_channels):
@@ -112,6 +120,11 @@ class GNN(torch.nn.Module):
         self.conv1 = GCNConv(in_channels, hidden_channels)
         self.conv2 = GCNConv(hidden_channels, out_channels)
         self.fc = torch.nn.Linear(out_channels, 1)
+        self.reset_parameters()
+
+    def reset_parameters(self):
+        init.xavier_uniform_(self.fc.weight)
+        self.fc.bias.data.fill_(0.01)
 
     def forward(self, data):
         x, edge_index, edge_attr = data.x, data.edge_index, data.edge_attr
@@ -123,57 +136,114 @@ class GNN(torch.nn.Module):
         x = self.fc(x)
         return x
 
-# Initialize the model with the correct number of input features
-model = GNN(in_channels=num_features, hidden_channels=16, out_channels=8)
-output = model(patient_data[0])
-print(output)
-
 # %% Custom loss function for survival prediction
 
 def survival_loss(pred, time, event, epsilon=1e-7):
     # Cox proportional hazards loss
     hazard_ratio = torch.exp(pred)
+    if torch.isnan(hazard_ratio).any():
+        print("NaNs in hazard_ratio")
     log_risk = torch.log(torch.cumsum(hazard_ratio, dim=0) + epsilon)
+    if torch.isnan(log_risk).any():
+        print("NaNs in log_risk")
     uncensored_likelihood = pred - log_risk
+    if torch.isnan(uncensored_likelihood).any():
+        print("NaNs in uncensored_likelihood")
     censored_likelihood = uncensored_likelihood * event
+    if torch.isnan(censored_likelihood).any():
+        print("NaNs in censored_likelihood")
     neg_log_likelihood = -torch.sum(censored_likelihood)
+    if torch.isnan(neg_log_likelihood).any():
+        print("NaNs in neg_log_likelihood")
     return neg_log_likelihood
 
 # %% Train the model
 
 from torch.optim import Adam
 from sklearn.preprocessing import MinMaxScaler
+from sklearn.model_selection import ParameterGrid
 
-# Define the model, optimizer, and loss function
-model = GNN(in_channels=num_features, hidden_channels=16, out_channels=8)
-optimizer = Adam(model.parameters(), lr=0.01)
+# Define the parameter grid for hyperparameter tuning
+param_grid = {
+    'hidden_channels': [16, 26, 32],
+    'out_channels': [5, 10, 15],
+    'learning_rate': [0.001, 0.005, 0.01]
+}
 
-# Training loop
-for epoch in range(10):
-    model.train()
-    for batch in train_loader:
-        optimizer.zero_grad()
-        output = model(batch)
-        loss = survival_loss(output, batch.y, batch.event)
-        loss.backward()
-        optimizer.step()
-    print(f'Epoch {epoch+1}, Loss: {loss.item()}')
+best_c_index = -1
+best_params = None
 
-# %% Evaluate the model
+# Perform grid search
+for params in ParameterGrid(param_grid):
+    hidden_channels = params['hidden_channels']
+    out_channels = params['out_channels']
+    learning_rate = params['learning_rate']
+    
+    # Define the model, optimizer, and loss function
+    model = GNN(in_channels=num_features, hidden_channels=hidden_channels, out_channels=out_channels)
+    optimizer = Adam(model.parameters(), lr=learning_rate)
+    
+    # Training loop
+    for epoch in range(5):
+        model.train()
+        for batch in train_loader:
+            optimizer.zero_grad()
+            output = model(batch)
+            loss = survival_loss(output, batch.y, batch.event)
+            loss.backward()
+            optimizer.step()
+    
+    model.eval()
+    preds = []
+    true_times = []
+    true_events = []
 
-model.eval()
-preds = []
-true_times = []
-true_events = []
+    with torch.no_grad():
+        for batch in test_loader:
+            output = model(batch)
+            preds.append(output.item())
+            true_times.append(batch.y.item())
+            true_events.append(batch.event.item())
 
-with torch.no_grad():
-    for batch in test_loader:
-        output = model(batch)
-        preds.append(output.item())
-        true_times.append(batch.y.item())
-        true_events.append(batch.event.item())
+    # Calculate the concordance index
+    c_index = concordance_index(true_times, preds, true_events)
+    print(f'Params: {params}, Concordance Index: {c_index}')
+    
+    # Update best parameters if current model is better
+    if c_index > best_c_index:
+        best_c_index = c_index
+        best_params = params
 
-# Calculate the concordance index
-c_index = concordance_index(true_times, preds, true_events)
-print(f'Concordance Index: {c_index}')
+print(f'Best Params: {best_params}, Best Concordance Index: {best_c_index}')
+
+# # Define the model with the best parameters
+# model = GNN(in_channels=num_features, hidden_channels=best_params['hidden_channels'], out_channels=5)
+# optimizer = Adam(model.parameters(), lr=best_params['learning_rate'])
+
+# # Training loop
+# for epoch in range(5):
+#     model.train()
+#     for batch in train_loader:
+#         optimizer.zero_grad()
+#         output = model(batch)
+#         loss = survival_loss(output, batch.y, batch.event)
+#         loss.backward()
+#         optimizer.step()
+#     print(f'Epoch {epoch+1}, Loss: {loss.item()}')
+
+# model.eval()
+# preds = []
+# true_times = []
+# true_events = []
+
+# with torch.no_grad():
+#     for batch in test_loader:
+#         output = model(batch)
+#         preds.append(output.item())
+#         true_times.append(batch.y.item())
+#         true_events.append(batch.event.item())
+
+# # Calculate the concordance index
+# c_index = concordance_index(true_times, preds, true_events)
+# print(f'Concordance Index: {c_index}')
 # %%
