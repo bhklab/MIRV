@@ -344,10 +344,12 @@ class DataProcessing:
         plt.figure(figsize=(6,3))
         matplotlib.rcParams.update({'font.size': 20})
         lesion_counts = counts[counts >= numLesions]
-        plt.hist(lesion_counts, bins=range(1, 10), weights=np.ones(len(lesion_counts)) / len(lesion_counts) * 100,color='#ab61c6')
+        bins = np.arange(1, np.max(lesion_counts) + 2) - 0.5
+        plt.hist(lesion_counts, bins=bins, weights=np.ones(len(lesion_counts)) / len(lesion_counts) * 100, color='blue')
+        plt.xticks(np.arange(1, np.max(lesion_counts) + 1))
         plt.xlim([2, np.max(lesion_counts)])
         # plt.grid(True)
-        plt.xlabel('Number of lesions')
+        plt.xlabel('Number of Tumors')
         plt.ylabel('Patients (%)')
         sns.despine(offset=10, trim=True)
         # plt.gca().yaxis.set_major_formatter(plt.FuncFormatter(lambda y, _: '{:.0f}%'.format(y)))
