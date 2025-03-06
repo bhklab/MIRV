@@ -2,5 +2,7 @@
 .pixi
 *.egg-info
 .DS_Store
-procdata
-rawdata
+
+# pixi environments
+.pixi
+*.egg-info

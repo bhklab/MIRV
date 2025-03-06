@@ -2,6 +2,7 @@ import pandas as pd, numpy as np
 from sklearn.preprocessing import StandardScaler
 from itertools import combinations
 from sklearn.metrics.pairwise import cosine_similarity
+from scipy.spatial.distance import mahalanobis
 from scipy.stats import spearmanr
 from statsmodels.stats.multitest import multipletests
 import seaborn as sns, matplotlib.pyplot as plt
@@ -11,14 +12,17 @@ from lifelines.statistics import logrank_test, multivariate_logrank_test
 from statannotations.Annotator import Annotator
 from scipy import stats
 
+
 class DataProcessing:
     def __init__(self,
                  patient_id = 'USUBJID',
                  labels = {'col':'Study','pre':'baseline', 'post':'cycle2'},
+                 resp_thresh = 25,
                  corr_thresh = {'vol':0.1,'rad':0.7}):
 
         self.patient_id = patient_id
         self.labels = labels
+        self.resp_thresh = resp_thresh,
         self.corr_thresh = corr_thresh
 
     def addStudyDateEncoder(self,rf_df):
@@ -184,8 +188,21 @@ class DataProcessing:
         baseline_range = vol_df.groupby(self.patient_id)['VOLUME_PRE'].apply(lambda x: x.max() - x.min())
         baseline_stddev = vol_df.groupby(self.patient_id)['VOLUME_PRE'].apply(lambda x: x.std()).values
         baseline_total = vol_df.groupby(self.patient_id)['VOLUME_PRE'].apply(lambda x: x.sum()).values
+
         if 'VOLUME_CHANGE_PCT' in vol_df.columns:
-            volume_range = vol_df.groupby(self.patient_id).apply(lambda x: x.VOLUME_CHANGE_PCT.max()-x.VOLUME_CHANGE_PCT.min())
+            volume_range = vol_df.groupby(self.patient_id).apply(lambda x: x.VOLUME_CHANGE_PCT.max() - x.VOLUME_CHANGE_PCT.min())
+
+            # Define the custom function
+            def check_volume_change(group):
+                if (group < self.resp_thresh).all():
+                    return 1
+                # elif (group <= self.resp_thresh).all():
+                #     return -1
+                else:
+                    return 0
+
+            # Apply the custom function to each group
+            volume_change_check = vol_df.groupby(self.patient_id)['VOLUME_CHANGE_PCT'].apply(check_volume_change)
 
         if resp_arr is not None:
             pinds_update = np.where(resp_arr != 0)[0]
@@ -197,21 +214,24 @@ class DataProcessing:
                     pvols = pvols.append(pd.Series(-100))
                 elif resp_arr[np.where(patient_list == patient_list[i])[0][0]] == 1:
                     pvols = pvols.append(pd.Series(100))
-                
-                # overwrite the volume_range value
+
+                # Overwrite the volume_range value
                 volume_range.iloc[pinds_update[i]] = pvols.max() - pvols.min()
+                
+                # Overwrite the volume_change_check value
+                volume_change_check.iloc[pinds_update[i]] = check_volume_change(pvols)
 
+        patient_outcomes = pd.DataFrame({
+            self.patient_id: baseline_range.index,
+            'Brange': baseline_range.values,
+            'Bstddev': baseline_stddev,
+            'Btotal': baseline_total,
+        })
 
-    
-        patient_outcomes = pd.DataFrame({   self.patient_id: baseline_range.index,
-                                            'Brange': baseline_range.values,
-                                            'Bstddev': baseline_stddev,
-                                            'Btotal': baseline_total
-                                            })
         if 'VOLUME_CHANGE_PCT' in vol_df.columns:
             patient_outcomes['Vrange'] = volume_range.values
-
-        patient_outcomes.reset_index(drop=True,inplace=True)
+            patient_outcomes['Mixed Response'] = volume_change_check.values
+            
 
         return patient_outcomes
     
@@ -246,7 +266,9 @@ class DataProcessing:
         # assess the correlation between radiomics features and lesion volume as well as the variance of each feature
         var = rad_df.var(numeric_only=True)
         cor = rad_df.corr(method='spearman',numeric_only=True)['original_shape_VoxelVolume']
-        cols_to_keep = rad_df.columns[np.where(np.logical_and(var>=10,cor<=self.corr_thresh['vol']))]
+        var_thresh = np.percentile(var, 50)
+        cols_to_keep = rad_df.columns[np.where(np.logical_and(var>=var_thresh,cor<=self.corr_thresh['vol']))]
+        # cols_to_keep = rad_df.columns[np.where(cor<=self.corr_thresh['vol'])]
         radiomics_varred_corred = rad_df[cols_to_keep]
 
         print('---------- Radiomic feature reduction ----------')
@@ -266,7 +288,7 @@ class DataProcessing:
         if 'original_shape_VoxelVolume' in reduced_radiomics.columns:
             reduced_radiomics.drop('original_shape_VoxelVolume',axis=1,inplace=True)
 
-        # scale the data for machine learning   
+        # scale the data  
         scaled_radiomics = pd.DataFrame(StandardScaler().fit_transform(reduced_radiomics.values))
         
         # add the USUBJID/Patient column and column names
@@ -319,13 +341,15 @@ class DataProcessing:
         print('----------')
 
         # plot the distribution of lesion counts as a percentage of patients
+        plt.figure(figsize=(6,3))
         matplotlib.rcParams.update({'font.size': 20})
         lesion_counts = counts[counts >= numLesions]
-        plt.hist(lesion_counts, bins=range(1, 10), weights=np.ones(len(lesion_counts)) / len(lesion_counts) * 100,color='darkgray')
+        plt.hist(lesion_counts, bins=range(1, 10), weights=np.ones(len(lesion_counts)) / len(lesion_counts) * 100,color='#ab61c6')
         plt.xlim([2, np.max(lesion_counts)])
-        plt.grid(True)
+        # plt.grid(True)
         plt.xlabel('Number of lesions')
         plt.ylabel('Patients (%)')
+        sns.despine(offset=10, trim=True)
         # plt.gca().yaxis.set_major_formatter(plt.FuncFormatter(lambda y, _: '{:.0f}%'.format(y)))
 
 
@@ -351,6 +375,10 @@ class DataProcessing:
             
             for i in range(len(combos)):
                 
+                # cov_mat = np.cov(np.stack((pc[combos[i][0],:],pc[combos[i][1],:]),axis=0),rowvar=False)
+                # cov_mat += np.eye(cov_mat.shape[0]) * 1e-10
+                # inv_cov_mat = np.linalg.inv(cov_mat)
+                # cos_sim[i] = mahalanobis(pc[combos[i][0],:],pc[combos[i][1],:],inv_cov_mat)
                 cos_sim[i] = 1 - cosine_similarity([pc[combos[i][0],:],pc[combos[i][1],:]])[0][1]
                 eucl_dist[i] = np.linalg.norm(pc[combos[i][0],:]-pc[combos[i][1],:])
 
@@ -424,11 +452,16 @@ class DataProcessing:
                         'Bstddev': 'Baseline Volume (σ)',
                         'Btotal': 'Baseline Volume (total)',
                         'Vrange': 'Δ Volume',
+                        'Mixed Response': 'Complete Tumor Response',
+                        'Pretreatment_bin': 'ctDNA (pre)',
+                        'Pre-cycle3_bin': 'ctDNA (post)',
+                        'RECIST': 'RECIST (non-PD)',
                         'AvgTumorSim': 'MIRV(μ) Dissimilarity',
                         'MaxTumorSim': 'MIRV(max) Dissimilarity',
                         'AvgEuclDist': 'MIRV(μ) Distance', 
                         'MaxEuclDist': 'MIRV(max) Distance'}  
-        df.columns = [rename_dict[col] if col in rename_dict.keys() else col for col in df.columns]
+        df = df.rename(columns=rename_dict)
+        df = df[[col for col in rename_dict.values() if col in df.columns]]
         df = df.dropna()
 
         print('----------')
@@ -614,11 +647,11 @@ class DataProcessing:
                     'patch.edgecolor': 'black',
                     'text.color': 'white',
                     'axes.facecolor': 'black',
-                    'axes.edgecolor': 'black',
+                    'axes.edgecolor': 'white',
                     'axes.labelcolor': 'white',
                     'xtick.color': 'white',
                     'ytick.color': 'white',
-                    'grid.color': 'black',
+                    'grid.color': 'white',
                     'figure.facecolor': 'black',
                     'figure.edgecolor': 'black',
                     'savefig.facecolor': 'black',
@@ -640,8 +673,13 @@ class DataProcessing:
                 # Conditional formatting for plots
                 # -------------------------------
                 # Specific to SARC021
-                if x_var == 'Histologic classification':
+                if x_var == 'CPCELL':
                     df_temp[x_var] = df_temp[x_var].replace({'Undifferentiated Pleomorphic Sarcoma': 'UPS'})
+                    # change the order of the categories to 'Leiomyosarcoma','UPS','Liposarcoma','Other'
+                    df_temp[x_var] = pd.Categorical(df_temp[x_var], categories=['Leiomyosarcoma','UPS','Liposarcoma','Other'], ordered=True)
+                if x_var == 'RECIST':
+                    # remove patients with NE response
+                    df_temp = df_temp[df_temp['RECIST'] != 'NE']
                 if x_var == 'Response_bin':
                     always_0 = np.logical_and(~df_temp['Pretreatment_bin'].astype(bool), ~df_temp['Pre-cycle3_bin'].astype(bool))
                     always_1 = np.logical_and(df_temp['Pretreatment_bin'].astype(bool), df_temp['Pre-cycle3_bin'].astype(bool))
@@ -683,10 +721,11 @@ class DataProcessing:
                 plt.rcParams.update({'font.size': 18})
 
                 # Boxplot of MIRV distance by histology
-                palette = sns.color_palette("colorblind", len(df_temp[x_var].unique()))
-                fig, ax = plt.subplots(figsize=(8, 6))
-                ax = sns.boxplot(x=x_var, y=mirv, data=df_temp, palette=palette)
-                ax.set_xticklabels(ax.get_xticklabels(), rotation=45)
+                num_categories = len(df_temp[x_var].unique())
+                palette = sns.color_palette("colorblind", num_categories)
+                fig, ax = plt.subplots(figsize=(num_categories * 2, 6))
+                ax = sns.boxplot(x=x_var, y=mirv, data=df_temp, palette=palette, hue=x_var, showfliers=False, legend=False,linecolor='white')
+                plt.xticks(rotation=45)
                 ax.set_ylabel(plot_dict[mirv])
                 ax.set_xlabel(None)
 
@@ -698,6 +737,9 @@ class DataProcessing:
                 annotator = Annotator(ax, pairs, data=df_temp, x=x_var, y=mirv)
                 annotator.configure(test='Kruskal', text_format='star', loc='outside', verbose=2, pvalue_thresholds=[(0.001, '***'), (0.01, '**'), (0.05, '*'), (0.1, '.'), (1, 'ns')])
                 annotator.apply_and_annotate()
+
+                # Adjust layout to prevent squishing
+                plt.subplots_adjust(bottom=0.3)
 
                 # Just because I like the look of it -- like R plots
                 sns.despine(trim=True, offset=10)
