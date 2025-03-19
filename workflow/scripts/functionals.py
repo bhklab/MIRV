@@ -726,7 +726,7 @@ class DataProcessing:
                 num_categories = len(df_temp[x_var].unique())
                 palette = sns.color_palette("colorblind", num_categories)
                 fig, ax = plt.subplots(figsize=(num_categories * 2, 6))
-                ax = sns.boxplot(x=x_var, y=mirv, data=df_temp, palette=palette, hue=x_var, showfliers=False, legend=False,linecolor='white')
+                ax = sns.boxplot(x=x_var, y=mirv, data=df_temp, palette=palette, hue=x_var, showfliers=False, legend=False,linecolor='black')
                 plt.xticks(rotation=45)
                 ax.set_ylabel(plot_dict[mirv])
                 ax.set_xlabel(None)

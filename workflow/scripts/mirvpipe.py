@@ -104,7 +104,7 @@ class MIRVPipe:
         # box_df = box_df.drop(columns=[self.patient_id])
         box_df = box_df[box_df['CPCELL'] != 'NE']
         boxplot_vars = box_df.columns[box_df.columns.get_loc('MaxEuclDist')+1:]
-        dp.compareMIRVByCategory(box_df, boxplot_vars, mirv_vars=['MaxEuclDist'],savefigFlag=False,invertFlag=False)
+        dp.compareMIRVByCategory(box_df, boxplot_vars, mirv_vars=['MaxEuclDist','MaxTumorSim'],savefigFlag=False,invertFlag=False)
         
         results = [rad_volume_results,survival_df,corr_df,box_df,cormat,pmat]
         
@@ -212,5 +212,54 @@ if __name__ == '__main__':
     
     # run the pipeline - SARC021 only
     results_surv = mp_sarc_surv.run()
-    results_liqb = mp_sarc_liqb.run()
-    results_lung = mp_sarc_lung.run()
+    # results_crlm = mp_crlm.run()
+    # results_liqb = mp_sarc_liqb.run()
+    # results_lung = mp_sarc_lung.run()
+
+    # %%
+
+    # merge results_surv[2] and results_surv[3] using the common columns
+    df1 = results_surv[2]
+    df2 = results_surv[3]
+    common_cols = list(set(df1.columns).intersection(set(df2.columns)))
+    df = df1.merge(df2, on=common_cols, how='left')
+    
+    # boxplto of MaxEuclDist by CPCELL
+    import matplotlib.pyplot as plt
+    import seaborn as sns, pandas as pd
+    from scipy import stats
+    from statannotations.Annotator import Annotator
+    x_var = 'CPCELL'
+    mirv = 'MaxEuclDist'
+    df_temp = df[[x_var, mirv]]
+    if x_var == 'CPCELL':
+        df_temp[x_var] = df_temp[x_var].replace({'Undifferentiated Pleomorphic Sarcoma': 'UPS'})
+        # change the order of the categories to 'Leiomyosarcoma','UPS','Liposarcoma','Other'
+        df_temp[x_var] = pd.Categorical(df_temp[x_var], categories=['Leiomyosarcoma','UPS','Liposarcoma','Other'], ordered=True)
+
+    num_categories = len(df_temp[x_var].unique())
+    palette = sns.color_palette("Set2")
+    fig, ax = plt.subplots(figsize=(num_categories * 2, 6))
+    sns.boxplot(x=x_var, y=mirv, data=df_temp, palette=palette, showfliers=False)
+    sns.stripplot(x=x_var, y=mirv, data=df_temp, color='black', alpha=0.5, jitter=True, dodge=True)
+    plt.xticks(rotation=45)
+    plt.ylabel('MaxEuclDist')
+    plt.title('MaxEuclDist by Histology')
+
+   # significance testing and annotation
+    histology_groups = df_temp.groupby(x_var)[mirv]
+    group_data = [group for name, group in histology_groups]
+    stat, p_value = stats.kruskal(*group_data)
+    pairs = [(group1, group2) for i, group1 in enumerate(histology_groups.groups.keys()) for group2 in list(histology_groups.groups.keys())[i + 1:]]
+    annotator = Annotator(ax, pairs, data=df_temp, x=x_var, y=mirv)
+    annotator.configure(test='Kruskal', text_format='star', loc='outside', verbose=1, pvalue_thresholds=[(0.001, '***'), (0.01, '**'), (0.05, '*'), (0.1, '.'), (1, 'ns')])
+    annotator.apply_and_annotate()
+
+    # Adjust layout to prevent squishing
+    plt.subplots_adjust(bottom=0.3)
+
+    # Just because I like the look of it -- like R plots
+    sns.despine(trim=True, offset=10)
+
+
+# %%
