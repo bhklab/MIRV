@@ -445,6 +445,8 @@ class DataProcessing:
                 'savefig.edgecolor': 'black',
                 'font.size': 24
             })
+        else:
+            plt.rcParams.update({'font.size': 24})
 
         if drop_cols is not None:
             df = df.drop(drop_cols,axis=1)

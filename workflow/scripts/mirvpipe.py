@@ -27,14 +27,25 @@ class MIRVPipe:
                     labels={'col': col_label, 'pre': 'baseline', 'post': 'cycle2'},
                     resp_thresh=33)       # options for 'col': (1) 'diagnostics_Versions_PyRadiomics', (2) 'STUDY'
         print('Data Processing Class Initialized')
+
         # radiomics data loading and feature reduction
         rad_volume_results = dp.loadRadiomics(self.radiomicsData)
+
+        if self.ctdnaData[0] is not None:
+            ctdna_df = dp.loadData(self.ctdnaData[0], self.ctdnaData[1]['corrvars'] + [self.patient_id])
+            ctdna_df[self.patient_id] = ctdna_df[self.patient_id].astype(str)
+            rad_volume_results[0][self.patient_id] = rad_volume_results[0][self.patient_id].astype(str)
+            rad_volume_results[0] = rad_volume_results[0].merge(ctdna_df, on=self.patient_id, how='left')
+            rad_volume_results[0] = rad_volume_results[0].dropna()
+            print('Number of patients (ctDNA): {}'.format(rad_volume_results[0].shape[0]))
+            print('----------')
 
         # feature reduction -- FIX
         radiomics_red = dp.radiomicsFeatureReduction(rad_volume_results[0])
         print('Selected Features: ')
         print(radiomics_red.columns)
         print('----------')
+
         
         # Calculate MIRV and determine the response outcomes (if available)
         if len(rad_volume_results) == 3:
@@ -211,55 +222,7 @@ if __name__ == '__main__':
                         )
     
     # run the pipeline - SARC021 only
-    results_surv = mp_sarc_surv.run()
+    # results_surv = mp_sarc_surv.run()
     # results_crlm = mp_crlm.run()
-    # results_liqb = mp_sarc_liqb.run()
+    results_liqb = mp_sarc_liqb.run()
     # results_lung = mp_sarc_lung.run()
-
-    # %%
-
-    # merge results_surv[2] and results_surv[3] using the common columns
-    df1 = results_surv[2]
-    df2 = results_surv[3]
-    common_cols = list(set(df1.columns).intersection(set(df2.columns)))
-    df = df1.merge(df2, on=common_cols, how='left')
-    
-    # boxplto of MaxEuclDist by CPCELL
-    import matplotlib.pyplot as plt
-    import seaborn as sns, pandas as pd
-    from scipy import stats
-    from statannotations.Annotator import Annotator
-    x_var = 'CPCELL'
-    mirv = 'MaxEuclDist'
-    df_temp = df[[x_var, mirv]]
-    if x_var == 'CPCELL':
-        df_temp[x_var] = df_temp[x_var].replace({'Undifferentiated Pleomorphic Sarcoma': 'UPS'})
-        # change the order of the categories to 'Leiomyosarcoma','UPS','Liposarcoma','Other'
-        df_temp[x_var] = pd.Categorical(df_temp[x_var], categories=['Leiomyosarcoma','UPS','Liposarcoma','Other'], ordered=True)
-
-    num_categories = len(df_temp[x_var].unique())
-    palette = sns.color_palette("Set2")
-    fig, ax = plt.subplots(figsize=(num_categories * 2, 6))
-    sns.boxplot(x=x_var, y=mirv, data=df_temp, palette=palette, showfliers=False)
-    sns.stripplot(x=x_var, y=mirv, data=df_temp, color='black', alpha=0.5, jitter=True, dodge=True)
-    plt.xticks(rotation=45)
-    plt.ylabel('MaxEuclDist')
-    plt.title('MaxEuclDist by Histology')
-
-   # significance testing and annotation
-    histology_groups = df_temp.groupby(x_var)[mirv]
-    group_data = [group for name, group in histology_groups]
-    stat, p_value = stats.kruskal(*group_data)
-    pairs = [(group1, group2) for i, group1 in enumerate(histology_groups.groups.keys()) for group2 in list(histology_groups.groups.keys())[i + 1:]]
-    annotator = Annotator(ax, pairs, data=df_temp, x=x_var, y=mirv)
-    annotator.configure(test='Kruskal', text_format='star', loc='outside', verbose=1, pvalue_thresholds=[(0.001, '***'), (0.01, '**'), (0.05, '*'), (0.1, '.'), (1, 'ns')])
-    annotator.apply_and_annotate()
-
-    # Adjust layout to prevent squishing
-    plt.subplots_adjust(bottom=0.3)
-
-    # Just because I like the look of it -- like R plots
-    sns.despine(trim=True, offset=10)
-
-
-# %%
