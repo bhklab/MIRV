@@ -295,6 +295,10 @@ class DataProcessing:
         scaled_radiomics.index = rad_df[self.patient_id]
         scaled_radiomics.columns = reduced_radiomics.columns
 
+        print('Selected Features: ')
+        print(scaled_radiomics.columns)
+        print('----------')
+
         return scaled_radiomics
     
     def loadData(self, path_to_data, selected_cols):

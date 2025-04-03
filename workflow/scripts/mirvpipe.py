@@ -25,7 +25,7 @@ class MIRVPipe:
         col_label = 'diagnostics_Versions_PyRadiomics' if 'all' in self.radiomicsData else 'STUDY'
         dp = DataProcessing(patient_id=self.patient_id,    # column name for patient ID in PyRadiomics output
                     labels={'col': col_label, 'pre': 'baseline', 'post': 'cycle2'},
-                    resp_thresh=33)       # options for 'col': (1) 'diagnostics_Versions_PyRadiomics', (2) 'STUDY'
+                    resp_thresh=33)  
         print('Data Processing Class Initialized')
 
         # radiomics data loading and feature reduction
@@ -34,19 +34,11 @@ class MIRVPipe:
         if self.ctdnaData[0] is not None:
             ctdna_df = dp.loadData(self.ctdnaData[0], self.ctdnaData[1]['corrvars'] + [self.patient_id])
             ctdna_df[self.patient_id] = ctdna_df[self.patient_id].astype(str)
-            rad_volume_results[0][self.patient_id] = rad_volume_results[0][self.patient_id].astype(str)
-            rad_volume_results[0] = rad_volume_results[0].merge(ctdna_df, on=self.patient_id, how='left')
-            rad_volume_results[0] = rad_volume_results[0].dropna()
-            print('Number of patients (ctDNA): {}'.format(rad_volume_results[0].shape[0]))
-            print('----------')
+            rad_volume_results[0] = rad_volume_results[0][rad_volume_results[0][self.patient_id].isin(ctdna_df[self.patient_id])]
 
-        # feature reduction -- FIX
+        # feature reduction
         radiomics_red = dp.radiomicsFeatureReduction(rad_volume_results[0])
-        print('Selected Features: ')
-        print(radiomics_red.columns)
-        print('----------')
 
-        
         # Calculate MIRV and determine the response outcomes (if available)
         if len(rad_volume_results) == 3:
             response_df = dp.calcResponseOutcomes(rad_volume_results[1],rad_volume_results[2])
@@ -68,9 +60,11 @@ class MIRVPipe:
             print('----------')
             print('Survival IQR: {}'.format(survival_df['T_OS'].quantile([0.25,0.50,0.75])))
             print('Number of events: {}'.format(survival_df['E_OS'].sum()))
-            mirv_cols = ['AvgTumorSim', 'MaxTumorSim', 'AvgEuclDist', 'MaxEuclDist']
+            mirv_cols = ['MaxTumorSim', 'MaxEuclDist']
             for col in mirv_cols:
                 dp.compareSurvival(survival_df, col, self.survivalData[1]['survcols'],savefigFlag=True)
+        else:
+            survival_df = None
 
         # ----- CORRELATION ANALYSIS -----
         data_types = [self.clinicalData,self.recistData,self.ctdnaData]
@@ -79,67 +73,36 @@ class MIRVPipe:
             if data[0] is not None and data[1]['corrvars'] is not None:
                 data_df = dp.loadData(data[0], data[1]['corrvars'] + [self.patient_id])
                 data_df = data_df[data_df[self.patient_id].isin(outcome_df[self.patient_id])]
-                if data == self.recistData and 'RECIST' in data_df.columns:
-                    data_df['RECIST'] = data_df['RECIST'] != 'PD'
-                # if data == self.ctdnaData and 'Pre-cycle3_bin' in data_df.columns:
-                #     data_df['Response_bin'] = data_df['Pre-cycle3_bin'] - data_df['Pretreatment_bin']  # fix
-                # if data == self.ctdnaData and 'Pre-cycle3_frac' in data_df.columns:
-                #     data_df['Response_frac'] = data_df['Pre-cycle3_frac'] - data_df['Pretreatment_frac']  # fix
                 corr_df[self.patient_id] = corr_df[self.patient_id].astype(str)
                 data_df[self.patient_id] = data_df[self.patient_id].astype(str)
                 corr_df = corr_df.merge(data_df, on=self.patient_id, how='left', suffixes=('', '_drop')).reset_index(drop=True)
-                # outcome_df = outcome_df.drop(columns=[f'{self.patient_id}_drop'])
         corr_df = corr_df.drop(columns=[self.patient_id])
 
-        if 'HPV' in corr_df.columns:
-            corr_df['HPV'] = corr_df['HPV'].replace({'Yes, positive':1,'Yes, Negative':0})
-            corr_df.dropna(inplace=True)
-
-        # output correlation matrix with significance values
-        # cols_to_drop = ['Response_bin', 'Pretreatment_bin', 'Pre-cycle3_bin']
-        cormat, pmat = dp.correlationMatrix(corr_df,drop_cols=['AvgTumorSim','AvgEuclDist'],savefigFlag=False,invertFlag=False) 
-
-        # ----- BOXPLOTS -----
-        data_types = [self.clinicalData,self.recistData,self.ctdnaData]
-        box_df = outcome_df.copy()
-        for i, data in enumerate(data_types):
-            if data[0] is not None and data[1]['boxplotvars'] is not None:
-                data_df = dp.loadData(data[0], data[1]['boxplotvars'] + [self.patient_id])
-                data_df = data_df[data_df[self.patient_id].isin(outcome_df[self.patient_id])]
-                if data == self.ctdnaData and 'Pre-cycle3_bin' in data_df.columns:
-                    data_df['Response_bin'] = data_df['Pre-cycle3_bin'] - data_df['Pretreatment_bin']  # fix
-                box_df[self.patient_id] = box_df[self.patient_id].astype(str)
-                data_df[self.patient_id] = data_df[self.patient_id].astype(str)
-                box_df = box_df.merge(data_df, on=self.patient_id, how='left', suffixes=('', '_drop')).reset_index(drop=True)
-                # outcome_df = outcome_df.drop(columns=[f'{self.patient_id}_drop'])
-        # box_df = box_df.drop(columns=[self.patient_id])
-        box_df = box_df[box_df['CPCELL'] != 'NE']
-        boxplot_vars = box_df.columns[box_df.columns.get_loc('MaxEuclDist')+1:]
-        dp.compareMIRVByCategory(box_df, boxplot_vars, mirv_vars=['MaxEuclDist','MaxTumorSim'],savefigFlag=False,invertFlag=False)
+        # correlation matrix
+        if self.radiomicsData == '../../procdata/SARC021/radiomics-all.csv':
+            cormat, pmat = None, None
+        else:
+            cormat, pmat = dp.correlationMatrix(corr_df,drop_cols=['AvgTumorSim','AvgEuclDist'],savefigFlag=False,invertFlag=False) 
         
-        results = [rad_volume_results,survival_df,corr_df,box_df,cormat,pmat]
-        
-        return results
+        return [rad_volume_results,survival_df,corr_df,cormat,pmat]
 
 if __name__ == '__main__':
     
-    # instantiate the MIRV pipeline for SARC021 (all patients, no ctDNA)
+    # instantiate the MIRV pipeline for all patients with survival data
     mp_sarc_surv = MIRVPipe(radiomics = '../../procdata/SARC021/radiomics-all.csv',
                             clinical  = [   '../../rawdata/SARC021/baseline-all.csv', 
-                                        {'corrvars':[],
+                                        {'corrvars':['CPCELL','AGE','BECOG'],
                                         'boxplotvars':['CPCELL']}], 
                             recist    = [   '../../rawdata/SARC021/recist-all.csv',
-                                        {'corrvars':[],
-                                        'boxplotvars':['RECIST']}], 
+                                        {'corrvars':['RECIST'],
+                                         'boxplotvars':['RECIST']}], 
                             survival  = [   '../../rawdata/SARC021/survival-all.csv',
-                                        {'survcols':[#('T_PFS','E_PFS'), 
-                                                     ('T_OS', 'E_OS')],
+                                        {'survcols':[('T_OS', 'E_OS')],
                                                      'yearConversion':1}], 
-                            ctdna     = [ None, #'../../rawdata/SARC021/ctdna-lms.csv',
-                                        {'corrvars':['Pretreatment_bin','Pre-cycle3_bin'],
-                                        'boxplotvars':['Pretreatment_bin','Pre-cycle3_bin']}]
+                            ctdna     = [None,None]
                         )
-    # instantiate the MIRV pipeline for SARC021 (all patients, with ctDNA)
+    
+    # instantiate the MIRV pipeline for patients with ctDNA
     mp_sarc_liqb = MIRVPipe(radiomics = '../../procdata/SARC021/radiomics-all.csv',
                             clinical  = [   '../../rawdata/SARC021/baseline-all.csv', 
                                         {'corrvars':[],
@@ -147,16 +110,13 @@ if __name__ == '__main__':
                             recist    = [   '../../rawdata/SARC021/recist-all.csv',
                                         {'corrvars':[],
                                         'boxplotvars':['RECIST']}], 
-                            survival  = [   '../../rawdata/SARC021/survival-all.csv',
-                                        {'survcols':[#('T_PFS','E_PFS'), 
-                                                     ('T_OS', 'E_OS')],
-                                                     'yearConversion':1}], 
+                            survival  = [None,None], 
                             ctdna     = [ '../../rawdata/SARC021/ctdna-lms.csv',
                                         {'corrvars':['Pretreatment_bin','Pre-cycle3_bin'],
                                         'boxplotvars':['Pretreatment_bin','Pre-cycle3_bin']}]
                         )
     
-    # instantiate the MIRV pipeline for SARC021 (lung subset, no ctDNA)
+    # instantiate the MIRV pipeline lung subset, no ctDNA
     mp_sarc_lung = MIRVPipe(radiomics = '../../procdata/SARC021/radiomics-lung.csv',
                             clinical  = [   '../../rawdata/SARC021/baseline-all.csv', 
                                         {'corrvars':[],
@@ -164,65 +124,36 @@ if __name__ == '__main__':
                             recist    = [   '../../rawdata/SARC021/recist-all.csv',
                                         {'corrvars':[],
                                         'boxplotvars':['RECIST']}], 
-                            survival  = [   '../../rawdata/SARC021/survival-all.csv',
-                                        {'survcols':[#('T_PFS','E_PFS'), 
-                                                     ('T_OS', 'E_OS')],
-                                                     'yearConversion':1}], 
-                            ctdna     = [ None, #'../../rawdata/SARC021/ctdna-lms.csv',
-                                        {'corrvars':['Pretreatment_bin','Pre-cycle3_bin'],
-                                        'boxplotvars':['Pretreatment_bin','Pre-cycle3_bin']}]
-                        )
-
-    # instantiate the MIRV pipeline for CRLM
-    mp_crlm = MIRVPipe(     radiomics = '../../procdata/MSK/MSK_radiomics.csv',
-                            clinical  = [ None,#  '../../rawdata/SARC021/baseline-all.csv', 
-                                        {'corrvars':[],
-                                        'boxplotvars':[]}], 
-                            recist    = [ None,#  '../../rawdata/SARC021/recist-all.csv',
-                                        {'corrvars':[],
-                                        'boxplotvars':[]}], 
-                            survival  = [ None, #  '../../rawdata/SARC021/survival-all.csv',
-                                        {'survcols':[],
-                                                     'yearConversion':1}], 
-                            ctdna     = [ None, #  '../../rawdata/SARC021/ctdna-lms.csv',
-                                        {'corrvars':[],
-                                        'boxplotvars':[]}]
+                            survival  = [None,None], 
+                            ctdna     = [None,None]
                         )
     
-    # instantiate the MIRV pipeline for RADCURE
-    mp_radc = MIRVPipe(     radiomics = '../../procdata/RADCURE/RADCURE_radiomics.csv',
-                            clinical  = [   '../../rawdata/RADCURE/RADCURE_clinical.csv', 
-                                        {'corrvars':[],
-                                        'boxplotvars':['SEX','PTUMSITE','HPV']}], 
-                            recist    = [   None,
-                                        {'corrvars':[],
-                                        'boxplotvars':[]}], 
-                            survival  = [   '../../rawdata/RADCURE/RADCURE_clinical.csv',
-                                        {'survcols':[('T_OS','E_OS')],
-                                        'yearConversion':1.0}], 
-                            ctdna     = ['../../rawdata/RADCURE/RADCURE_ctdna.csv',
-                                        {'corrvars':['Log Baseline','Log Mid RT'],
-                                        'boxplotvars':[]}]
-                        )
-    
-    # instantiate the MIRV pipeline for RADCURE
-    mp_octn = MIRVPipe(     radiomics = '../../procdata/OCTANE/OCTANE_radiomics.csv',
-                            clinical  = [   '../../rawdata/OCTANE/OCTANE_clinical.csv', 
-                                        {'corrvars':[],
-                                        'boxplotvars':['Cancer Type']}], 
-                            recist    = [   None,
-                                        {'corrvars':[],
-                                        'boxplotvars':[]}], 
-                            survival  = [   '../../rawdata/OCTANE/OCTANE_clinical.csv',
-                                        {'survcols':[('T_OS','E_OS')],
-                                        'yearConversion':1.0}], 
-                            ctdna     = [   '../../rawdata/OCTANE/OCTANE_ctDNA.csv',
-                                        {'corrvars':['tumour-fraction-zviran-adj'],
-                                        'boxplotvars':['tumour-fraction-zviran-adj']}]
-                        )
-    
-    # run the pipeline - SARC021 only
-    # results_surv = mp_sarc_surv.run()
-    # results_crlm = mp_crlm.run()
-    results_liqb = mp_sarc_liqb.run()
+    # run the pipeline by subset
     # results_lung = mp_sarc_lung.run()
+    # results_liqb = mp_sarc_liqb.run()
+    results_surv = mp_sarc_surv.run()
+    print('MIRV pipeline complete')
+
+    # %% Additional survival analysis
+
+    import pandas as pd
+    import numpy as np
+    import matplotlib.pyplot as plt
+    import seaborn as sns
+    from lifelines import KaplanMeierFitter
+    from lifelines.statistics import logrank_test
+    from lifelines.statistics import multivariate_logrank_test
+    from lifelines.statistics import proportional_hazard_test
+
+    # Clean-up the data
+    df_surv = results_surv[1]
+    df_corr = results_surv[2]
+    df_merged = df_surv.merge(df_corr, on=['AvgEuclDist', 'AvgTumorSim', 
+                                           'Brange', 'Bstddev', 'Btotal',
+                                           'MaxEuclDist', 'MaxTumorSim'])
+
+    df_merged.drop(columns=['AvgEuclDist', 'AvgTumorSim',
+                            'Brange', 'Bstddev', 'group',
+                            'USUBJID'], inplace=True)
+
+# %%
