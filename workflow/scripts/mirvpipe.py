@@ -140,10 +140,14 @@ if __name__ == '__main__':
     import numpy as np
     import matplotlib.pyplot as plt
     import seaborn as sns
-    from lifelines import KaplanMeierFitter
+    from lifelines import CoxPHFitter, KaplanMeierFitter
     from lifelines.statistics import logrank_test
     from lifelines.statistics import multivariate_logrank_test
     from lifelines.statistics import proportional_hazard_test
+
+    # update matplotlib parameters for black background
+    plt.rcParams.update(plt.rcParamsDefault)
+    plt.rcParams.update({'font.size': 24})
 
     # Clean-up the data
     df_surv = results_surv[1]
@@ -155,5 +159,49 @@ if __name__ == '__main__':
     df_merged.drop(columns=['AvgEuclDist', 'AvgTumorSim',
                             'Brange', 'Bstddev', 'group',
                             'USUBJID'], inplace=True)
+
+    # Cox Proportional Hazards Regression (multivariable)
+    cph = CoxPHFitter()
+    df_merged = df_merged.dropna()
+
+    # Feature formatting - patient age, tumor burden, CPCELL, RECIST
+    df_merged['AGE'] = df_merged['AGE'] >= 65 
+    df_merged['Btotal'] = df_merged['Btotal'] >= df_merged['Btotal'].median()
+    df_merged['CPCELL'] = df_merged['CPCELL'].astype('category').cat.codes
+    df_merged['RECIST'] = df_merged['RECIST'].astype('category').cat.codes
+
+    df_merged.rename(columns={'MaxTumorSim':'MIRV (max) Dissimilarity',
+                              'MaxEuclDist':'MIRV (max) Distance',
+                              'T_OS':'Overall survival (years)',
+                              'E_OS':'Overall survival event',
+                              'AGE':'Patient Age >= 65',
+                              'Btotal':'Baseline Volume (total)',
+                              'CPCELL':'Histologic classification',
+                              'BECOG':'ECOG Performance Status'},
+                     inplace=True)
+
+    # add interactions terms between clinical variables and MIRV
+    df_merged['ECOG x MIRV Dissimilarity'] = df_merged['ECOG Performance Status'] * df_merged['MIRV (max) Dissimilarity']
+    df_merged['Histology x MIRV Dissimilarity'] = df_merged['Histologic classification'] * df_merged['MIRV (max) Dissimilarity']
+    df_merged['Age x MIRV Dissimilarity'] = df_merged['Patient Age >= 65'] * df_merged['MIRV (max) Dissimilarity']
+    df_merged['RECIST x MIRV Dissimilarity'] = df_merged['RECIST'] * df_merged['MIRV (max) Dissimilarity']
+
+    # add interactions terms between clinical variables and MIRV (max) Distance
+    # df_merged['ECOG x MIRV Distance'] = df_merged['ECOG Performance Status'] * df_merged['MIRV (max) Distance']
+    # df_merged['Histology x MIRV Distance'] = df_merged['Histologic classification'] * df_merged['MIRV (max) Distance']
+    # df_merged['Age x MIRV Distance'] = df_merged['Patient Age >= 65'] * df_merged['MIRV (max) Distance']
+    # df_merged['RECIST x MIRV Distance'] = df_merged['RECIST'] * df_merged['MIRV (max) Distance']
+
+    # Fit the Cox Proportional Hazards model
+    cph = CoxPHFitter()
+    cph.fit(df_merged, duration_col='Overall survival (years)', event_col='Overall survival event')
+
+    # Print the summary of the fitted model
+    cph.print_summary()
+
+    # Plot the coefficients
+    cph.plot()
+    sns.despine(offset=10,trim=True)
+    plt.show()
 
 # %%
