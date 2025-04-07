@@ -3,6 +3,9 @@
 *.egg-info
 .DS_Store
 
-# pixi environments
-.pixi
-*.egg-info
+# data
+rawdata/OCTANE
+rawdata/RADCURE
+procdata/OCTANE
+procdata/RADCURE
+procdata/MSK
