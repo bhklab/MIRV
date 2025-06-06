@@ -32,6 +32,8 @@ patients_with_survival_data = survival['USUBJID'].unique()
 valid_patients = patients_with_multiple_lesions.intersection(patients_with_survival_data)
 radiomics = radiomics[radiomics['USUBJID'].isin(valid_patients)]
 survival = survival[survival['USUBJID'].isin(valid_patients)][['USUBJID', 'T_OS', 'E_OS']]
+clinical = clinical[clinical['USUBJID'].isin(valid_patients)]
+
 
 # get spatial coordinates using the masks (convert from strings) 
 com_idx = radiomics.pop('diagnostics_Mask-original_CenterOfMassIndex')
@@ -43,6 +45,7 @@ for entry in com_idx:
 
 com_vectors = np.array(com_vectors) 
 subj_list = radiomics.pop('USUBJID')
+cols_to_keep = list(cols_to_keep) + ['original_shape_VoxelVolume']
 radiomics = radiomics[cols_to_keep]
 # Determine the number of input features for modeling
 num_features = radiomics.shape[1]   
@@ -141,20 +144,20 @@ class GNN(torch.nn.Module):
 def survival_loss(pred, time, event, epsilon=1e-7):
     # Cox proportional hazards loss
     hazard_ratio = torch.exp(pred)
-    if torch.isnan(hazard_ratio).any():
-        print("NaNs in hazard_ratio")
+    # if torch.isnan(hazard_ratio).any():
+    #     print("NaNs in hazard_ratio")
     log_risk = torch.log(torch.cumsum(hazard_ratio, dim=0) + epsilon)
-    if torch.isnan(log_risk).any():
-        print("NaNs in log_risk")
+    # if torch.isnan(log_risk).any():
+    #     print("NaNs in log_risk")
     uncensored_likelihood = pred - log_risk
-    if torch.isnan(uncensored_likelihood).any():
-        print("NaNs in uncensored_likelihood")
+    # if torch.isnan(uncensored_likelihood).any():
+    #     print("NaNs in uncensored_likelihood")
     censored_likelihood = uncensored_likelihood * event
-    if torch.isnan(censored_likelihood).any():
-        print("NaNs in censored_likelihood")
+    # if torch.isnan(censored_likelihood).any():
+    #     print("NaNs in censored_likelihood")
     neg_log_likelihood = -torch.sum(censored_likelihood)
-    if torch.isnan(neg_log_likelihood).any():
-        print("NaNs in neg_log_likelihood")
+    # if torch.isnan(neg_log_likelihood).any():
+    #     print("NaNs in neg_log_likelihood")
     return neg_log_likelihood
 
 # %% Train the model
@@ -165,9 +168,11 @@ from sklearn.model_selection import ParameterGrid
 
 # Define the parameter grid for hyperparameter tuning
 param_grid = {
-    'hidden_channels': [16, 26, 32],
-    'out_channels': [5, 10, 15],
-    'learning_rate': [0.001, 0.005, 0.01]
+    'hidden_channels': [18, 21, 24, 27],
+    'out_channels': [9, 6, 3],
+    'learning_rate': [0.0001, 0.001, 0.01],
+    'batch_size': [1, 2, 4],
+    'epochs': [50, 100, 200]
 }
 
 best_c_index = -1
@@ -175,75 +180,86 @@ best_params = None
 
 # Perform grid search
 for params in ParameterGrid(param_grid):
-    hidden_channels = params['hidden_channels']
-    out_channels = params['out_channels']
-    learning_rate = params['learning_rate']
-    
-    # Define the model, optimizer, and loss function
-    model = GNN(in_channels=num_features, hidden_channels=hidden_channels, out_channels=out_channels)
-    optimizer = Adam(model.parameters(), lr=learning_rate)
-    
-    # Training loop
-    for epoch in range(5):
-        model.train()
-        for batch in train_loader:
-            optimizer.zero_grad()
-            output = model(batch)
-            loss = survival_loss(output, batch.y, batch.event)
-            loss.backward()
-            optimizer.step()
-    
-    model.eval()
-    preds = []
-    true_times = []
-    true_events = []
+    try:
+        hidden_channels = params['hidden_channels']
+        out_channels = params['out_channels']
+        learning_rate = params['learning_rate']
+        batch_size = params['batch_size']
+        epochs = params['epochs']
+        
+        # Define the model, optimizer, and loss function
+        model = GNN(in_channels=num_features, hidden_channels=hidden_channels, out_channels=out_channels)
+        optimizer = Adam(model.parameters(), lr=learning_rate)
+        
+        # Create DataLoaders for batching with the current batch size
+        train_loader = DataLoader(train_data, batch_size=batch_size, shuffle=True)
+        test_loader = DataLoader(test_data, batch_size=batch_size, shuffle=False)
+        
+        # Training loop
+        for epoch in range(epochs):
+            model.train()
+            for batch in train_loader:
+                optimizer.zero_grad()
+                output = model(batch)
+                loss = survival_loss(output, batch.y, batch.event)
+                loss.backward()
+                optimizer.step()
+        
+        model.eval()
+        preds = []
+        true_times = []
+        true_events = []
 
-    with torch.no_grad():
-        for batch in test_loader:
-            output = model(batch)
-            preds.append(output.item())
-            true_times.append(batch.y.item())
-            true_events.append(batch.event.item())
+        with torch.no_grad():
+            for batch in test_loader:
+                output = model(batch)
+                preds.append(output.item())
+                true_times.append(batch.y.item())
+                true_events.append(batch.event.item())
 
-    # Calculate the concordance index
-    c_index = concordance_index(true_times, preds, true_events)
-    print(f'Params: {params}, Concordance Index: {c_index}')
-    
-    # Update best parameters if current model is better
-    if c_index > best_c_index:
-        best_c_index = c_index
-        best_params = params
+        # Calculate the concordance index
+        c_index = concordance_index(true_times, preds, true_events)
+        print(f'Params: {params}, Concordance Index: {c_index}')
+        
+        # Update best parameters if current model is better
+        if c_index > best_c_index:
+            best_c_index = c_index
+            best_params = params
+    except Exception as e:
+        print(f"Error with params {params}: {e}")
 
 print(f'Best Params: {best_params}, Best Concordance Index: {best_c_index}')
 
-# # Define the model with the best parameters
-# model = GNN(in_channels=num_features, hidden_channels=best_params['hidden_channels'], out_channels=5)
-# optimizer = Adam(model.parameters(), lr=best_params['learning_rate'])
+# %%
 
-# # Training loop
-# for epoch in range(5):
-#     model.train()
-#     for batch in train_loader:
-#         optimizer.zero_grad()
-#         output = model(batch)
-#         loss = survival_loss(output, batch.y, batch.event)
-#         loss.backward()
-#         optimizer.step()
-#     print(f'Epoch {epoch+1}, Loss: {loss.item()}')
+# Define the model with the best parameters
+model = GNN(in_channels=num_features, hidden_channels=best_params['hidden_channels'], out_channels=best_params['out_channels'])
+optimizer = Adam(model.parameters(), lr=best_params['learning_rate'])
 
-# model.eval()
-# preds = []
-# true_times = []
-# true_events = []
+# Training loop with the best parameters
+for epoch in range(best_params['epochs']):
+    model.train()
+    for batch in train_loader:
+        optimizer.zero_grad()
+        output = model(batch)
+        loss = survival_loss(output, batch.y, batch.event)
+        loss.backward()
+        optimizer.step()
+    print(f'Epoch {epoch+1}, Loss: {loss.item()}')
 
-# with torch.no_grad():
-#     for batch in test_loader:
-#         output = model(batch)
-#         preds.append(output.item())
-#         true_times.append(batch.y.item())
-#         true_events.append(batch.event.item())
+model.eval()
+preds = []
+true_times = []
+true_events = []
 
-# # Calculate the concordance index
-# c_index = concordance_index(true_times, preds, true_events)
-# print(f'Concordance Index: {c_index}')
+with torch.no_grad():
+    for batch in test_loader:
+        output = model(batch)
+        preds.append(output.item())
+        true_times.append(batch.y.item())
+        true_events.append(batch.event.item())
+
+# Calculate the concordance index
+c_index = concordance_index(true_times, preds, true_events)
+print(f'Concordance Index: {c_index}')
 # %%

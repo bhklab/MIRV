@@ -295,10 +295,6 @@ class DataProcessing:
         scaled_radiomics.index = rad_df[self.patient_id]
         scaled_radiomics.columns = reduced_radiomics.columns
 
-        print('Selected Features: ')
-        print(scaled_radiomics.columns)
-        print('----------')
-
         return scaled_radiomics
     
     def loadData(self, path_to_data, selected_cols):
@@ -363,16 +359,10 @@ class DataProcessing:
         df.index = df.index.astype(str)
         
         # preallocate lists for storing results
-        maxTumorSim = []
-        maxEuclDist = []
-
-        # post-hoc sensitivity analysis (adding mean, median and SD of the pairwise distances)
         avgTumorSim = []
+        maxTumorSim = []
         avgEuclDist = []
-        medTumorSim = []
-        medEuclDist = []
-        stdTumorSim = []
-        stdEuclDist = []
+        maxEuclDist = []
 
         for p in np.unique(df.index):
             
@@ -395,44 +385,24 @@ class DataProcessing:
                 eucl_dist[i] = np.linalg.norm(pc[combos[i][0],:]-pc[combos[i][1],:])
 
             # append patient-level results to lists
-            maxTumorSim.append(np.max(cos_sim))
-            maxEuclDist.append(np.max(eucl_dist))
-
-            # post-hoc sensitivity analysis
             avgTumorSim.append(np.mean(cos_sim))
+            maxTumorSim.append(np.max(cos_sim))
             avgEuclDist.append(np.mean(eucl_dist))
-            medTumorSim.append(np.median(cos_sim))
-            medEuclDist.append(np.median(eucl_dist))
-            stdTumorSim.append(np.std(cos_sim))
-            stdEuclDist.append(np.std(eucl_dist))
-
+            maxEuclDist.append(np.max(eucl_dist))
         if resp_df is not None:
             resp_df.index = resp_df.index.astype(str)
             outcome_df = resp_df.copy()[resp_df[self.patient_id].isin(pids[counts >= numLesions])]
             # add patient-level results to outcome DataFrame
-            outcome_df['MaxTumorSim'] = maxTumorSim
-            outcome_df['MaxEuclDist'] = maxEuclDist
-
-            # post-hoc sensitivity analysis
             outcome_df['AvgTumorSim'] = avgTumorSim
+            outcome_df['MaxTumorSim'] = maxTumorSim
             outcome_df['AvgEuclDist'] = avgEuclDist
-            outcome_df['MedTumorSim'] = medTumorSim
-            outcome_df['MedEuclDist'] = medEuclDist
-            outcome_df['StdTumorSim'] = stdTumorSim
-            outcome_df['StdEuclDist'] = stdEuclDist
-
+            outcome_df['MaxEuclDist'] = maxEuclDist
         else:
             outcome_df = pd.DataFrame({self.patient_id: pids[counts >= numLesions],
-                                        'MaxTumorSim': maxTumorSim,
-                                        'MaxEuclDist': maxEuclDist,
-                                        # post-hoc sensitivity analysis
                                         'AvgTumorSim': avgTumorSim,
+                                        'MaxTumorSim': maxTumorSim,
                                         'AvgEuclDist': avgEuclDist,
-                                        'MedTumorSim': medTumorSim,
-                                        'MedEuclDist': medEuclDist,
-                                        'StdTumorSim': stdTumorSim,
-                                        'StdEuclDist': stdEuclDist
-                                        })
+                                        'MaxEuclDist': maxEuclDist})
         
 
         return outcome_df
@@ -490,16 +460,10 @@ class DataProcessing:
                         'Pretreatment_bin': 'ctDNA (pre)',
                         'Pre-cycle3_bin': 'ctDNA (post)',
                         'RECIST': 'RECIST (non-PD)',
-                        'MaxTumorSim': 'MIRV(max) Dissimilarity',
-                        'MaxEuclDist': 'MIRV(max) Distance',
-                        # post-hoc sensitivity analysis
                         'AvgTumorSim': 'MIRV(μ) Dissimilarity',
+                        'MaxTumorSim': 'MIRV(max) Dissimilarity',
                         'AvgEuclDist': 'MIRV(μ) Distance', 
-                        'MedTumorSim': 'MIRV(med) Dissimilarity',
-                        'MedEuclDist': 'MIRV(med) Distance',
-                        'StdTumorSim': 'MIRV(σ) Dissimilarity',
-                        'StdEuclDist': 'MIRV(σ) Distance',
-                        }  
+                        'MaxEuclDist': 'MIRV(max) Distance'}  
         df = df.rename(columns=rename_dict)
         df = df[[col for col in rename_dict.values() if col in df.columns]]
         df = df.dropna()
