@@ -130,7 +130,8 @@ if __name__ == '__main__':
     
     # run the pipeline by subset
     results_lung = mp_sarc_lung.run()
-    results_liqb = mp_sarc_liqb.run()
+
+    # results_liqb = mp_sarc_liqb.run()
     # results_surv = mp_sarc_surv.run()
     print('MIRV pipeline complete')
 
