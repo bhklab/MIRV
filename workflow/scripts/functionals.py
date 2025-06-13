@@ -318,7 +318,7 @@ class DataProcessing:
 
         return pd.read_csv(path_to_data)[selected_cols]
     
-    def calcMIRVMetrics(self,rad_df,resp_df):
+    def calcMIRVMetrics(self,rad_df,resp_df,sensitivity_analysis=False):
         """
         Calculates the cosine similarity and Euclidean distance between pairs of lesions for each patient.
         Steps:
@@ -366,13 +366,14 @@ class DataProcessing:
         maxTumorSim = []
         maxEuclDist = []
 
-        # post-hoc sensitivity analysis (adding mean, median and SD of the pairwise distances)
-        avgTumorSim = []
-        avgEuclDist = []
-        medTumorSim = []
-        medEuclDist = []
-        stdTumorSim = []
-        stdEuclDist = []
+        # if sensitivity analysis is requested, preallocate lists for storing results
+        if sensitivity_analysis:
+            avgTumorSim = []
+            avgEuclDist = []
+            medTumorSim = []
+            medEuclDist = []
+            stdTumorSim = []
+            stdEuclDist = []
 
         for p in np.unique(df.index):
             
@@ -399,12 +400,13 @@ class DataProcessing:
             maxEuclDist.append(np.max(eucl_dist))
 
             # post-hoc sensitivity analysis
-            avgTumorSim.append(np.mean(cos_sim))
-            avgEuclDist.append(np.mean(eucl_dist))
-            medTumorSim.append(np.median(cos_sim))
-            medEuclDist.append(np.median(eucl_dist))
-            stdTumorSim.append(np.std(cos_sim))
-            stdEuclDist.append(np.std(eucl_dist))
+            if sensitivity_analysis:
+                avgTumorSim.append(np.mean(cos_sim))
+                avgEuclDist.append(np.mean(eucl_dist))
+                medTumorSim.append(np.median(cos_sim))
+                medEuclDist.append(np.median(eucl_dist))
+                stdTumorSim.append(np.std(cos_sim))
+                stdEuclDist.append(np.std(eucl_dist))
 
         if resp_df is not None:
             resp_df.index = resp_df.index.astype(str)
@@ -414,25 +416,28 @@ class DataProcessing:
             outcome_df['MaxEuclDist'] = maxEuclDist
 
             # post-hoc sensitivity analysis
-            outcome_df['AvgTumorSim'] = avgTumorSim
-            outcome_df['AvgEuclDist'] = avgEuclDist
-            outcome_df['MedTumorSim'] = medTumorSim
-            outcome_df['MedEuclDist'] = medEuclDist
-            outcome_df['StdTumorSim'] = stdTumorSim
-            outcome_df['StdEuclDist'] = stdEuclDist
+            if sensitivity_analysis:
+                outcome_df['AvgTumorSim'] = avgTumorSim
+                outcome_df['AvgEuclDist'] = avgEuclDist
+                outcome_df['MedTumorSim'] = medTumorSim
+                outcome_df['MedEuclDist'] = medEuclDist
+                outcome_df['StdTumorSim'] = stdTumorSim
+                outcome_df['StdEuclDist'] = stdEuclDist
 
         else:
-            outcome_df = pd.DataFrame({self.patient_id: pids[counts >= numLesions],
-                                        'MaxTumorSim': maxTumorSim,
-                                        'MaxEuclDist': maxEuclDist,
-                                        # post-hoc sensitivity analysis
-                                        'AvgTumorSim': avgTumorSim,
-                                        'AvgEuclDist': avgEuclDist,
-                                        'MedTumorSim': medTumorSim,
-                                        'MedEuclDist': medEuclDist,
-                                        'StdTumorSim': stdTumorSim,
-                                        'StdEuclDist': stdEuclDist
-                                        })
+            # post-hoc sensitivity analysis
+            outcome_df = pd.DataFrame({
+            self.patient_id: pids[counts >= numLesions],
+            'MaxTumorSim': maxTumorSim,
+            'MaxEuclDist': maxEuclDist
+            })
+            if sensitivity_analysis:
+                outcome_df['AvgTumorSim'] = avgTumorSim
+                outcome_df['AvgEuclDist'] = avgEuclDist
+                outcome_df['MedTumorSim'] = medTumorSim
+                outcome_df['MedEuclDist'] = medEuclDist
+                outcome_df['StdTumorSim'] = stdTumorSim
+                outcome_df['StdEuclDist'] = stdEuclDist
         
 
         return outcome_df
