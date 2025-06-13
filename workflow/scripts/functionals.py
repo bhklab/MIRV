@@ -356,6 +356,7 @@ class DataProcessing:
         plt.xlabel('Number of Tumors')
         plt.ylabel('Patients (%)')
         sns.despine(offset=10, trim=True)
+        plt.show()
         # plt.gca().yaxis.set_major_formatter(plt.FuncFormatter(lambda y, _: '{:.0f}%'.format(y)))
 
 
@@ -572,7 +573,7 @@ class DataProcessing:
         
         return cor, pval
     
-    def compareSurvival(self, df, mirv='MaxEuclDist', survCols=[('T_OS','E_OS')], yearConvert=1, savefigFlag=False, invertFlag=False):
+    def compareSurvival(self, df, mirv='MaxEuclDist', survCols=[('T_OS','E_OS')], yearConvert=1, savefigFlag=False, plotFlag=True, invertFlag=False):
         """
         Compare Overall Survival and Progression-Free Survival by a column in a DataFrame.
         The function performs the following:
@@ -634,30 +635,31 @@ class DataProcessing:
         else:
             df['group'] = df[mirv]
 
-        for survival_col, event_col in survCols:
-            plt.figure(figsize=(10, 6))
-            for name, grouped_df in df.groupby('group'):
-                if yearConvert > 1:
-                    grouped_df[survival_col] = grouped_df[survival_col] / yearConvert
-                kmf.fit(grouped_df[survival_col], event_observed=grouped_df[event_col], label=str(name))
-                kmf.plot_survival_function()
-            sns.despine(trim=True, offset=5)
-            plt.title(f'Survival function by {mirv}')
-            plt.xlabel('Time (years)')
-            plt.ylabel('Survival probability')
-            if savefigFlag:
-                plt.savefig(f'../../results/{survival_col}_{mirv}.png',bbox_inches='tight',dpi=300)
-            plt.show()
+        if plotFlag:
+            for survival_col, event_col in survCols:
+                plt.figure(figsize=(10, 6))
+                for name, grouped_df in df.groupby('group'):
+                    if yearConvert > 1:
+                        grouped_df[survival_col] = grouped_df[survival_col] / yearConvert
+                    kmf.fit(grouped_df[survival_col], event_observed=grouped_df[event_col], label=str(name))
+                    kmf.plot_survival_function()
+                sns.despine(trim=True, offset=5)
+                plt.title(f'Survival function by {mirv}')
+                plt.xlabel('Time (years)')
+                plt.ylabel('Survival probability')
+                if savefigFlag:
+                    plt.savefig(f'../../results/{survival_col}_{mirv}.png',bbox_inches='tight',dpi=300)
+                plt.show()
 
-            if df['group'].nunique() == 2:
-                group1 = df[df['group'] == df['group'].unique()[0]]
-                group2 = df[df['group'] == df['group'].unique()[1]]
-                results = logrank_test(group1[survival_col], group2[survival_col], 
-                                    event_observed_A=group1[event_col], event_observed_B=group2[event_col])
-                print(f'Log-rank test p-value for {mirv}: {results.p_value}')
-            else:
-                results = multivariate_logrank_test(df[survival_col], df['group'], df[event_col])
-                print(f'Log-rank test p-value for {mirv}: {results.p_value}')
+                if df['group'].nunique() == 2:
+                    group1 = df[df['group'] == df['group'].unique()[0]]
+                    group2 = df[df['group'] == df['group'].unique()[1]]
+                    results = logrank_test(group1[survival_col], group2[survival_col], 
+                                        event_observed_A=group1[event_col], event_observed_B=group2[event_col])
+                    print(f'Log-rank test p-value for {mirv}: {results.p_value}')
+                else:
+                    results = multivariate_logrank_test(df[survival_col], df['group'], df[event_col])
+                    print(f'Log-rank test p-value for {mirv}: {results.p_value}')
 
     def compareMIRVByCategory(self, boxplot_df, boxplot_vars, mirv_vars=['MaxEuclDist'],savefigFlag=False,invertFlag=False):
 
