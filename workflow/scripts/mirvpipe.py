@@ -130,7 +130,7 @@ if __name__ == '__main__':
     
     # run the pipeline by subset
     results_lung = mp_sarc_lung.run()
-    # results_liqb = mp_sarc_liqb.run()
+    results_liqb = mp_sarc_liqb.run()
     # results_surv = mp_sarc_surv.run()
     print('MIRV pipeline complete')
 
@@ -259,4 +259,146 @@ if __name__ == '__main__':
 # print('-----------------------------------')
 # print('---------PIPELINE FINISHED---------')
 # print('-----------------------------------')
+# %% COMPARATIVE ROC CURVES
+
+import pandas as pd
+import numpy as np
+import matplotlib.pyplot as plt
+from sklearn.linear_model import LogisticRegression
+from sklearn.model_selection import StratifiedKFold, GridSearchCV
+from sklearn.metrics import roc_auc_score, roc_curve
+import seaborn as sns
+
+# Run both analyses and save results separately
+roc_results_lung = {}
+feature_importances_lung = {}
+roc_results_liqb = {}
+feature_importances_liqb = {}
+
+for analysis_type in ['lung', 'liqb']:
+    if analysis_type == 'lung':
+        df_vol = results_lung[0][1]
+        btotal = df_vol.groupby('USUBJID')['VOLUME_PRE'].sum()
+        df_burden = pd.DataFrame({'USUBJID': btotal.index, 'Btotal': btotal.values})
+        df = df_burden.merge(results_lung[2], on='Btotal', how='left').dropna()
+    else:
+        df_vol = results_liqb[0][1]
+        btotal = df_vol.groupby('USUBJID')['VOLUME_PRE'].sum()
+        df_burden = pd.DataFrame({'USUBJID': btotal.index, 'Btotal': btotal.values})
+        df = df_burden.merge(results_liqb[2], on='Btotal', how='left').dropna()
+
+    # Merge clinical and recist data
+    df_clin = pd.read_csv('../../rawdata/SARC021/baseline-all.csv')
+    df_recist = pd.read_csv('../../rawdata/SARC021/recist-all.csv')
+    df = df.merge(df_clin[['USUBJID', 'CPCELL', 'AGE', 'BECOG']], on='USUBJID', how='left')
+    df = df.merge(df_recist[['USUBJID', 'RECIST']], on='USUBJID', how='left')
+
+    # Encode categorical variables
+    df['CPCELL'] = df['CPCELL'].astype('category').cat.codes
+    df['AGE'] = (df['AGE'] >= 65).astype(int)
+    df['BECOG'] = df['BECOG'].astype('category').cat.codes
+    recist_order = ['NE', 'CR', 'PR', 'SD', 'PD']
+    df['RECIST'] = pd.Categorical(df['RECIST'], categories=recist_order, ordered=True).codes
+
+    feature_sets = {
+        "Baseline": ['Btotal', 'CPCELL', 'AGE', 'BECOG'],
+        "Baseline+RECIST": ['Btotal', 'CPCELL', 'AGE', 'BECOG', 'RECIST'],
+        "Baseline+MIRV": ['Btotal', 'CPCELL', 'AGE', 'BECOG', 'MaxTumorSim', 'MaxEuclDist'],
+        "Baseline+RECIST+MIRV": ['Btotal', 'CPCELL', 'AGE', 'BECOG', 'RECIST', 'MaxTumorSim', 'MaxEuclDist'],
+    }
+    pretty_names = {
+        "Btotal": "Baseline Volume (total)",
+        "CPCELL": "Histologic Classification",
+        "AGE": "Patient Age >= 65",
+        "BECOG": "ECOG Performance Status",
+        "RECIST": "RECIST",
+        "MaxTumorSim": "MIRV Dissimilarity",
+        "MaxEuclDist": "MIRV Distance"
+    }
+
+    cv = StratifiedKFold(n_splits=5, shuffle=True, random_state=42)
+    param_grid = {'C': np.logspace(-3, 3, 7), 'penalty': ['l2'], 'solver': ['lbfgs'], 'max_iter': [1000]}
+
+    roc_results = {}
+    feature_importances = {}
+
+    for model_name, feats in feature_sets.items():
+        X = df[feats].values
+        if analysis_type == 'lung':
+            y = df['Mixed Response'].values
+        else:
+            y = df['Pre-cycle3_bin'].values
+        grid = GridSearchCV(LogisticRegression(), param_grid, cv=cv, scoring='roc_auc', n_jobs=1)
+        grid.fit(X, y)
+        print(f"{analysis_type} - {model_name}: Best params: {grid.best_params_}, Mean AUC: {grid.best_score_:.2f}")
+
+        # ROC curve
+        tprs, aucs = [], []
+        mean_fpr = np.linspace(0, 1, 100)
+        for train, test in cv.split(X, y):
+            model = LogisticRegression(**grid.best_params_)
+            model.fit(X[train], y[train])
+            probas_ = model.predict_proba(X[test])[:, 1]
+            fpr, tpr, _ = roc_curve(y[test], probas_)
+            auc = roc_auc_score(y[test], probas_)
+            aucs.append(auc)
+            tprs.append(np.interp(mean_fpr, fpr, tpr))
+            tprs[-1][0] = 0.0
+        mean_tpr = np.mean(tprs, axis=0)
+        mean_auc = np.mean(aucs)
+        std_auc = np.std(aucs)
+        roc_results[model_name] = (mean_fpr, mean_tpr, mean_auc, std_auc)
+
+        # Feature importance
+        coefs = grid.best_estimator_.coef_[0]
+        feature_importances[model_name] = dict(zip([pretty_names[f] for f in feats], coefs))
+
+    if analysis_type == 'lung':
+        roc_results_lung = roc_results
+        feature_importances_lung = feature_importances
+    else:
+        roc_results_liqb = roc_results
+        feature_importances_liqb = feature_importances
+
+# %% PLOTTING ROC CURVES
+fig, axes = plt.subplots(1, 2, figsize=(14, 6), sharey=True)
+
+# Plot for lung
+ax = axes[0]
+for model_name, (mean_fpr, mean_tpr, mean_auc, std_auc) in roc_results_lung.items():
+    ax.plot(mean_fpr, mean_tpr, lw=2, label=f"{model_name} (AUC={mean_auc:.2f}±{std_auc:.2f})")
+ax.plot([0, 1], [0, 1], 'k--', lw=1)
+ax.set_xlabel('False Positive Rate')
+ax.set_ylabel('True Positive Rate')
+ax.set_title('Lung Subset')
+ax.grid(False)
+
+# Plot for liqb
+ax = axes[1]
+for model_name, (mean_fpr, mean_tpr, mean_auc, std_auc) in roc_results_liqb.items():
+    ax.plot(mean_fpr, mean_tpr, lw=2, label=f"{model_name}")
+ax.plot([0, 1], [0, 1], 'k--', lw=1)
+ax.set_xlabel('False Positive Rate')
+ax.set_title('ctDNA Subset')
+
+
+
+# Shared legend
+handles, labels = axes[1].get_legend_handles_labels()
+fig.legend(handles, labels, loc='center left', bbox_to_anchor=(0.85, 0.5), frameon=False)
+plt.tight_layout(rect=[0, 0, 0.85, 1])
+# plt.suptitle('Comparative ROC Curves: Lung vs ctDNA Subsets', fontsize=16, y=1.02)
+sns.despine(trim=True, offset=10)
+plt.savefig('../../results/roc_curves_comparative.png', dpi=300, bbox_inches='tight')
+plt.show()
+
+# --- Text output for reporting ---
+print("Lung Subset AUCs:")
+for model_name, (_, _, mean_auc, std_auc) in roc_results_lung.items():
+    print(f"  {model_name}: {mean_auc:.2f} ± {std_auc:.2f}")
+
+print("\nctDNA Subset AUCs:")
+for model_name, (_, _, mean_auc, std_auc) in roc_results_liqb.items():
+    print(f"  {model_name}: {mean_auc:.2f} ± {std_auc:.2f}")
+
 # %%
