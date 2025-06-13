@@ -359,7 +359,7 @@ fig, axes = plt.subplots(1, 2, figsize=(14, 6), sharey=True)
 for idx, (analysis_type, roc_results) in enumerate(roc_results_all.items()):
     ax = axes[idx]
     for model_name, (mean_fpr, mean_tpr, mean_auc, std_auc) in roc_results.items():
-        ax.plot(mean_fpr, mean_tpr, lw=2, label=f"{model_name} (AUC={mean_auc:.2f}±{std_auc:.2f})")
+        ax.plot(mean_fpr, mean_tpr, lw=2, label=f"{model_name}")
     ax.plot([0, 1], [0, 1], 'k--', lw=1)
     ax.set_xlabel('False Positive Rate')
     if idx == 0:
