@@ -49,10 +49,10 @@ tl_labels <- parse(text = gsub("([<>=+-/*])", "'\\1'", colnames(lung_data)))
 # Define color palette: negative = blue, positive = red
 col_palette <- colorRampPalette(c("blue", "white", "red"))(200)
 # **Define Rainbow Colormap**
-col_palette <- colorRampPalette(rainbow(7))(200)  # Smooth rainbow gradient
+#col_palette <- colorRampPalette(rainbow(7))(200)  # Smooth rainbow gradient
 
 # **Save as high-resolution PNG**
-png("/Users/caryngeady/Documents/GitHub/MIRV/results/lung_corrplot_highres.png", width = 3000, height = 3000, res = 300)  # 300 DPI
+#png("/Users/caryngeady/Documents/GitHub/MIRV/results/lung_corrplot_highres.png", width = 3000, height = 3000, res = 600)  # 600 DPI
 
 # Plot correlation matrix
 corrplot(stats$r, 
@@ -62,10 +62,13 @@ corrplot(stats$r,
          insig = "blank",      # Hide non-significant correlations
          tl.col = "black",     # Font color to black
          tl.cex = 0.5,         # Adjust text size if needed
+         cl.ratio = 0.3,
+         cl.cex = 1.0,
+         cl.align = "c",
          diag = FALSE,         # Remove diagonal
          col = col_palette)    # Flip colors: positive = red, negative = blue
 
-dev.off()  # Save and close the file
+#dev.off()  # Save and close the file
 ```
 ```{r}
 df_corr = read.csv("/Users/caryngeady/Documents/GitHub/MIRV/procdata/SARC021/df_corr.csv")
