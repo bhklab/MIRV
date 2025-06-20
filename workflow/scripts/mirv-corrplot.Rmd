@@ -12,12 +12,12 @@ library(Hmisc)
 library(corrplot)
 
 # read in the data
-lung_data <- read.csv("/Users/caryngeady/Documents/GitHub/MIRV/procdata/SARC021/corr_df.csv")
-lb_data <- read.csv("/Users/caryngeady/Documents/GitHub/MIRV/procdata/SARC021/lb_corr.csv")
-lb_data <- read.csv("/Users/caryngeady/Documents/GitHub/MIRV/procdata/SARC021/liqb_corr.csv")
+df <- read.csv("/Users/caryngeady/Documents/GitHub/MIRV/procdata/SARC021/corr_df.csv")
+df <- read.csv("/Users/caryngeady/Documents/GitHub/MIRV/procdata/SARC021/lb_corr.csv")
+df <- read.csv("/Users/caryngeady/Documents/GitHub/MIRV/procdata/SARC021/liqb_corr.csv")
 
 # Compute Spearman correlation
-stats <- rcorr(as.matrix(lung_data), type = "spearman")
+stats <- rcorr(as.matrix(df), type = "spearman")
 
 # Extract and adjust p-values
 fdr_values <- matrix(p.adjust(as.vector(stats$P), method = "BH"), 

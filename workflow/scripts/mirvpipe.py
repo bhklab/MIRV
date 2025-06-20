@@ -141,6 +141,7 @@ import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
 import seaborn as sns
+import scipy
 from lifelines import CoxPHFitter, KaplanMeierFitter
 from lifelines.statistics import logrank_test
 from lifelines.statistics import multivariate_logrank_test
@@ -149,6 +150,7 @@ from sklearn.linear_model import LogisticRegression
 from sklearn.model_selection import StratifiedKFold, GridSearchCV
 from sklearn.metrics import roc_auc_score, roc_curve
 import warnings
+from statsmodels.stats.multitest import multipletests
 
 # update matplotlib parameters for black background
 plt.rcParams.update(plt.rcParamsDefault)
@@ -206,6 +208,7 @@ cph.print_summary()
 # Plot the coefficients
 cph.plot()
 sns.despine(offset=10,trim=True)
+plt.savefig('../../results/cox_model_coefficients.png', dpi=600, transparent=True, bbox_inches='tight')
 plt.show()
 
 
@@ -216,15 +219,30 @@ from lifelines import KaplanMeierFitter, CoxPHFitter
 from lifelines.statistics import logrank_test
 from lifelines.plotting import add_at_risk_counts
 
-def plot_km_with_risk_table(kmf_high, kmf_low, fig):
+from matplotlib.lines import Line2D
+from matplotlib.patches import Patch
+# plt.style.use('dark_background')
+
+def plot_km_with_risk_table(kmf_high, kmf_low, fig, mirv_col='MIRV (max) Dissimilarity', hist=0):
     ax = fig.add_subplot(111)
+    # Plot survival functions
     kmf_high.plot_survival_function(ax=ax, ci_show=True, color='#764179')
     kmf_low.plot_survival_function(ax=ax, ci_show=True, color='#3BAEE6')
+
+    # Define custom legend to match the plot elements
+    legend_elements = [
+        Line2D([0], [0], color='#764179', lw=2, label='High'),
+        Line2D([0], [0], color='#3BAEE6', lw=2, label='Low')
+    ]
+    ax.legend(handles=legend_elements, loc='upper right')
+
+    # Add labels and risk table
     ax.set_ylabel('Survival Probability')
-    ax.legend(['High', 'Low'], loc='upper right')
+    ax.set_xlabel('Time (years)')
     sns.despine(trim=True, offset=10, ax=ax)
     add_at_risk_counts(kmf_high, kmf_low, ax=ax, fig=fig)
-    ax.set_xlabel('Time (years)')
+    plt.savefig(f'../../results/km_plot_{mirv_col}_histology_{hist}.png', dpi=600, transparent=True,bbox_inches='tight')
+
     plt.show()
 
 def analyze_by_histology(df, mirv_col):
@@ -242,7 +260,7 @@ def analyze_by_histology(df, mirv_col):
                 label=group
             )
         fig = plt.figure(figsize=(8, 6))
-        plot_km_with_risk_table(kmf_high, kmf_low, fig)
+        plot_km_with_risk_table(kmf_high, kmf_low, fig,mirv_col=mirv_col, hist=hist)
         results = logrank_test(
             df_subset.loc[df_subset['MIRV_group'] == 'High', 'Overall survival (years)'],
             df_subset.loc[df_subset['MIRV_group'] == 'Low', 'Overall survival (years)'],
@@ -256,10 +274,59 @@ def analyze_by_histology(df, mirv_col):
         print(f"Univariable Cox model for {mirv_col} in Histology = {hist}:")
         cph.print_summary()
 
-# Example usage:
-mirv = ['MIRV (max) Dissimilarity', 'MIRV (max) Distance']
-idx = 0  # or loop over both metrics if desired
-analyze_by_histology(df_merged, mirv[idx])
+def analyze_by_histology_with_fdr(df, mirv_cols):
+    """
+    Analyze survival by histology and MIRV metrics, output p-values, and correct for multiple testing using FDR.
+
+    Parameters:
+    df (pd.DataFrame): Merged DataFrame containing survival and MIRV metrics.
+    mirv_cols (list): List of MIRV metrics to analyze.
+
+    Returns:
+    pd.DataFrame: DataFrame containing histology, MIRV metric, raw p-values, and FDR-corrected p-values.
+    """
+    results = []
+    
+    for mirv_col in mirv_cols:
+        for hist in df['Histologic classification'].unique():
+            df_subset = df[df['Histologic classification'] == hist].copy()
+            median_mirv = df_subset[mirv_col].median()
+            df_subset['MIRV_group'] = np.where(df_subset[mirv_col] > median_mirv, 'High', 'Low')
+            
+            # Perform log-rank test
+            logrank_results = logrank_test(
+                df_subset.loc[df_subset['MIRV_group'] == 'High', 'Overall survival (years)'],
+                df_subset.loc[df_subset['MIRV_group'] == 'Low', 'Overall survival (years)'],
+                event_observed_A=df_subset.loc[df_subset['MIRV_group'] == 'High', 'Overall survival event'],
+                event_observed_B=df_subset.loc[df_subset['MIRV_group'] == 'Low', 'Overall survival event']
+            )
+            
+            # Collect results
+            results.append({
+                'Histology': hist,
+                'MIRV Metric': mirv_col,
+                'Raw p-value': logrank_results.p_value
+            })
+    
+    # Convert results to DataFrame
+    results_df = pd.DataFrame(results)
+    
+    # Apply FDR correction
+    results_df['FDR-corrected p-value'] = multipletests(results_df['Raw p-value'], method='fdr_bh')[1]
+    
+    return results_df
+
+# Example usage
+mirv_cols = ['MIRV (max) Dissimilarity', 'MIRV (max) Distance']
+results_df = analyze_by_histology_with_fdr(df_merged, mirv_cols)
+
+# Print results
+print(results_df)
+
+# Save results to CSV
+results_df.to_csv('../../results/histology_mirv_pvalues.csv', index=False)
+# %%
+analyze_by_histology(df_merged, 'MIRV (max) Dissimilarity')
 
 # %% COMPARATIVE ROC CURVES
 
@@ -293,7 +360,7 @@ def run_logistic_cv(df, y_col, feature_sets, pretty_names, param_grid, cv):
             grid.fit(X, y)
         print(f"{model_name}: Best params: {grid.best_params_}, Mean AUC: {grid.best_score_:.2f}")
         # ROC curve
-        tprs, aucs = [], []
+        tprs, aucs, probs, reals = [], [], [], []
         mean_fpr = np.linspace(0, 1, 100)
         for train, test in cv.split(X, y):
             with warnings.catch_warnings():
@@ -306,10 +373,14 @@ def run_logistic_cv(df, y_col, feature_sets, pretty_names, param_grid, cv):
             aucs.append(auc)
             tprs.append(np.interp(mean_fpr, fpr, tpr))
             tprs[-1][0] = 0.0
+            probs.append(probas_)
+            reals.append(y[test])
+        probs = np.concatenate(probs)
+        reals = np.concatenate(reals)
         mean_tpr = np.mean(tprs, axis=0)
         mean_auc = np.mean(aucs)
         std_auc = np.std(aucs)
-        roc_results[model_name] = (mean_fpr, mean_tpr, mean_auc, std_auc)
+        roc_results[model_name] = (mean_fpr, mean_tpr, mean_auc, std_auc, probs, reals)
         # Feature importance
         coefs = grid.best_estimator_.coef_[0]
         feature_importances[model_name] = dict(zip([pretty_names[f] for f in feats], coefs))
@@ -354,32 +425,161 @@ for analysis_type, params in analyses.items():
     roc_results_all[analysis_type] = roc_results
     feature_importances_all[analysis_type] = feature_importances
 
+# %%
 # --- Plotting ---
+
+colors = ['#ffc20a','#0c7bdc','#d41159','#40b0a6']
+i = 0
 fig, axes = plt.subplots(1, 2, figsize=(14, 6), sharey=True)
 for idx, (analysis_type, roc_results) in enumerate(roc_results_all.items()):
     ax = axes[idx]
-    for model_name, (mean_fpr, mean_tpr, mean_auc, std_auc) in roc_results.items():
-        ax.plot(mean_fpr, mean_tpr, lw=2, label=f"{model_name}")
-    ax.plot([0, 1], [0, 1], 'k--', lw=1)
-    ax.set_xlabel('False Positive Rate')
+    for model_name, (mean_fpr, mean_tpr, mean_auc, std_auc, probs, reals) in roc_results.items():
+        ax.plot(mean_fpr, mean_tpr, lw=2, label=f"{model_name}",color=colors[i])
+        i += 1
+    ax.plot([0, 1], [0, 1], 'w--', lw=1)
+    ax.set_xlabel('False Positive Rate',color='white')
     if idx == 0:
-        ax.set_ylabel('True Positive Rate')
+        ax.set_ylabel('True Positive Rate', color='white')
     ax.set_title('Lung Subset' if analysis_type == 'lung' else 'ctDNA Subset')
     ax.grid(False)
+    i = 0
 # Shared legend
 handles, labels = axes[1].get_legend_handles_labels()
 fig.legend(handles, labels, loc='center left', bbox_to_anchor=(0.85, 0.5), frameon=False)
+# invert color scheme
+plt.style.use('dark_background')
 plt.tight_layout(rect=[0, 0, 0.85, 1])
 sns.despine(trim=True, offset=10)
-plt.savefig('../../results/roc_curves_comparative.png', dpi=300, bbox_inches='tight')
+plt.savefig('../../results/roc_curves_comparative.png', dpi=600, transparent=True, bbox_inches='tight')
 plt.show()
 
 # --- Text output for reporting ---
 for analysis_type, roc_results in roc_results_all.items():
     print(f"\n{analysis_type.capitalize()} Subset AUCs:")
-    for model_name, (_, _, mean_auc, std_auc) in roc_results.items():
+    for model_name, (_, _, mean_auc, std_auc, _, _) in roc_results.items():
         print(f"  {model_name}: {mean_auc:.2f} ± {std_auc:.2f}")
 
 print('-----------------------------------')
 print('---------PIPELINE FINISHED---------')
 print('-----------------------------------')
+
+# %% DELONG TEST
+
+def Delong_test(true, prob_A, prob_B):
+    """
+    Perform DeLong's test for comparing the AUCs of two models.
+
+    Parameters
+    ----------
+    true : array-like of shape (n_samples,)
+        True binary labels in range {0, 1}.
+    prob_A : array-like of shape (n_samples,)
+        Predicted probabilities by the first model.
+    prob_B : array-like of shape (n_samples,)
+        Predicted probabilities by the second model.
+
+    Returns
+    -------
+    z_score : float
+        The z score from comparing the AUCs of two models.
+    p_value : float
+        The p value from comparing the AUCs of two models.
+
+    Example
+    -------
+    >>> true = [0, 1, 0, 1]
+    >>> prob_A = [0.1, 0.4, 0.35, 0.8]
+    >>> prob_B = [0.2, 0.3, 0.4, 0.7]
+    >>> z_score, p_value = Delong_test(true, prob_A, prob_B)
+    >>> print(f"Z-Score: {z_score}, P-Value: {p_value}")
+    """
+
+    def compute_midrank(x):
+        J = np.argsort(x)
+        Z = x[J]
+        N = len(x)
+        T = np.zeros(N, dtype=np.float64)
+        i = 0
+        while i < N:
+            j = i
+            while j < N and Z[j] == Z[i]:
+                j += 1
+            T[i:j] = 0.5 * (i + j - 1)
+            i = j
+        T2 = np.empty(N, dtype=np.float64)
+        T2[J] = T + 1
+        return T2
+
+    def compute_ground_truth_statistics(true):
+        assert np.array_equal(np.unique(true), [0, 1]), "Ground truth must be binary."
+        order = (-true).argsort()
+        label_1_count = int(true.sum())
+        return order, label_1_count
+
+    # Prepare data
+    order, label_1_count = compute_ground_truth_statistics(np.array(true))
+    sorted_probs = np.vstack((np.array(prob_A), np.array(prob_B)))[:, order]
+
+    # Fast DeLong computation starts here
+    m = label_1_count  # Number of positive samples
+    n = sorted_probs.shape[1] - m  # Number of negative samples
+    k = sorted_probs.shape[0]  # Number of models (2)
+
+    # Initialize arrays for midrank computations
+    tx, ty, tz = [np.empty([k, size], dtype=np.float64) for size in [m, n, m + n]]
+    for r in range(k):
+        positive_examples = sorted_probs[r, :m]
+        negative_examples = sorted_probs[r, m:]
+        tx[r, :], ty[r, :], tz[r, :] = [
+            compute_midrank(examples) for examples in [positive_examples, negative_examples, sorted_probs[r, :]]
+        ]
+
+    # Calculate AUCs
+    aucs = tz[:, :m].sum(axis=1) / (m * n) - (m + 1.0) / (2.0 * n)
+
+    # Compute variance components
+    v01 = (tz[:, :m] - tx[:, :]) / n
+    v10 = 1.0 - (tz[:, m:] - ty[:, :]) / m
+
+    # Compute covariance matrices
+    sx = np.cov(v01)
+    sy = np.cov(v10)
+    delongcov = sx / m + sy / n
+
+    # Calculating z-score and p-value
+    l = np.array([[1, -1]])
+    z = np.abs(np.diff(aucs)) / np.sqrt(np.dot(np.dot(l, delongcov), l.T)).flatten()
+    p_value = scipy.stats.norm.sf(abs(z)) * 2
+
+    z_score = -z[0].item()
+    p_value = p_value[0].item()
+
+    return z_score, p_value
+
+# %% TESTING STATS
+
+
+# Perform pairwise comparisons of models for each dataset using DeLong's test
+
+for dataset_name, roc_results in roc_results_all.items():
+    print(f"\nComparing models for dataset: {dataset_name.capitalize()}")
+    model_names = list(roc_results.keys())
+    
+    # Iterate through all pairs of models
+    for i in range(len(model_names)):
+        for j in range(i + 1, len(model_names)):
+            model_A = model_names[i]
+            model_B = model_names[j]
+            
+            # Extract true labels and predicted probabilities
+            true = roc_results[model_A][5]
+            prob_A = roc_results[model_A][4]
+            prob_B = roc_results[model_B][4]
+            
+            # Perform DeLong's test
+            z_score, p_value = Delong_test(true, prob_A, prob_B)
+            
+            # Print results
+            print(f"  {model_A} vs {model_B}: Z-Score = {z_score:.4f}, P-Value = {p_value:.4f}")
+
+# %%
